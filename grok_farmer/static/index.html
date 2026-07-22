@@ -153,22 +153,8 @@ tbody td{padding:12px 20px;font-size:.85rem}
 .quota-bar-fill{height:100%;border-radius:3px;transition:width .6s ease}
 
 /* ── Request Log ── */
-.req-log-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:24px;animation:fadeIn .6s ease}
-.req-log-header{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--border)}
-.req-log-header h2{font-size:1rem;font-weight:600;display:flex;align-items:center;gap:8px}
-.req-log-header .live-dot{width:8px;height:8px;border-radius:50%;background:var(--green);animation:pulse 1.5s ease infinite}
-.req-log-body{max-height:360px;overflow-y:auto}
-.req-log-body table{width:100%;border-collapse:collapse}
-.req-log-body thead th{position:sticky;top:0;background:var(--bg2);z-index:1;text-align:left;padding:8px 12px;font-size:.65rem;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border)}
-.req-log-body tbody td{padding:6px 12px;font-size:.75rem;border-bottom:1px solid var(--border);font-family:'JetBrains Mono',monospace}
-.req-log-body tbody tr:hover{background:var(--bg3)}
-.token-chip{display:inline-flex;align-items:center;padding:1px 6px;border-radius:4px;font-size:.65rem;font-weight:600}
-.token-in{background:rgba(99,102,241,.15);color:var(--accent2)}
-.token-out{background:var(--green-ghost);color:var(--green)}
-.token-cache{background:var(--yellow-ghost);color:var(--yellow)}
-.token-total{background:var(--bg3);color:var(--text2)}
-.status-ok{color:var(--green)}
-.status-err{color:var(--red)}
+
+
 
 /* ── Settings Modal ── */
 .settings-btn{background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 14px;color:var(--text2);font-family:var(--font);font-size:.8rem;font-weight:500;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:all .2s}
@@ -317,25 +303,7 @@ tbody td{padding:12px 20px;font-size:.85rem}
     </div>
   </div>
 
-  <!-- Request Log -->
-  <div class="req-log-wrap">
-    <div class="req-log-header">
-      <h2><span class="live-dot"></span> Request Log</h2>
-      <span style="font-size:.75rem;color:var(--text3)" id="reqLogCount">0 requests</span>
-    </div>
-    <div class="req-log-body" id="reqLogBody">
-      <table>
-        <thead><tr>
-          <th>Time</th><th>Conn</th><th>Model</th><th>Input</th><th>Output</th><th>Cache</th><th>Total</th><th>Quota</th><th>Status</th><th>ms</th>
-        </tr></thead>
-        <tbody id="reqLogTbody">
-          <tr><td colspan="10" style="text-align:center;color:var(--text3);padding:24px">No requests yet. Use the proxy endpoint at <code>/v1/responses</code> to see logs here.</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- Logs -->
+  <!-- Live Logs -->
   <div class="log-panel">
     <div class="log-header">
       <h2>Live Logs</h2>
@@ -488,7 +456,7 @@ function connectWS() {
       const msg = JSON.parse(e.data);
       if (msg.type === 'progress') updateFarmUI(msg.data);
       if (msg.type === 'log') addLog(msg.line);
-      if (msg.type === 'request_log') addRequestLogEntry(msg.data);
+
     } catch {}
   };
   ws.onclose = () => setTimeout(connectWS, 3000);
@@ -557,52 +525,7 @@ async function fetchQuota() {
 }
 
 // ── Request Log ──
-let reqLogEntries = [];
-async function fetchRequestLog() {
-  try {
-    const r = await fetch('/api/request-log?limit=50');
-    if (!r.ok) return;
-    const d = await r.json();
-    reqLogEntries = d.logs || [];
-    renderRequestLog();
-  } catch {}
-}
 
-function renderRequestLog() {
-  const tbody = document.getElementById('reqLogTbody');
-  document.getElementById('reqLogCount').textContent = reqLogEntries.length + ' requests';
-  if (reqLogEntries.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text3);padding:24px">No requests yet. Use the proxy endpoint at <code>/v1/responses</code> to see logs here.</td></tr>';
-    return;
-  }
-  tbody.innerHTML = reqLogEntries.map(l => {
-    const statusCls = l.status === 'completed' ? 'status-ok' : (l.status?.startsWith('error') ? 'status-err' : '');
-    const statusText = l.status === 'completed' ? 'OK' : l.status || '?';
-    return `<tr>
-      <td style="color:var(--text3)">${esc(l.time || '')}</td>
-      <td>${esc(l.conn || '')}</td>
-      <td style="color:var(--accent2)">${esc(l.model || '')}</td>
-      <td><span class="token-chip token-in">${(l.input_tokens||0).toLocaleString()}</span></td>
-      <td><span class="token-chip token-out">${(l.output_tokens||0).toLocaleString()}</span></td>
-      <td><span class="token-chip token-cache">${(l.cached_tokens||0).toLocaleString()}</span></td>
-      <td><span class="token-chip token-total">${(l.total_tokens||0).toLocaleString()}</span></td>
-      <td style="color:var(--text3)">${l.remaining != null ? (l.remaining/1000).toFixed(0)+'K' : '-'}</td>
-      <td class="${statusCls}">${esc(statusText)}</td>
-      <td style="color:var(--text3)">${l.elapsed != null ? (l.elapsed*1000).toFixed(0) : '-'}</td>
-    </tr>`;
-  }).reverse().join('');
-  // Auto-scroll to newest
-  const body = document.getElementById('reqLogBody');
-  body.scrollTop = 0;
-}
-
-function addRequestLogEntry(entry) {
-  reqLogEntries.push(entry);
-  if (reqLogEntries.length > 100) reqLogEntries = reqLogEntries.slice(-100);
-  renderRequestLog();
-}
-
-// ── Render ──
 function renderAccounts() {
   const el = document.getElementById('tableBody');
   const countEl = document.getElementById('accountCount');
@@ -824,7 +747,6 @@ function refreshAll() {
   fetchAccounts();
   fetchLogs();
   fetchQuota();
-  fetchRequestLog();
 }
 
 // ── Utils ──
@@ -840,10 +762,8 @@ fetchStats();
 fetchAccounts();
 fetchLogs();
 fetchQuota();
-fetchRequestLog();
 // Auto-refresh every 10s
 setInterval(() => { fetchStats(); fetchAccounts(); fetchQuota(); }, 10000);
-setInterval(() => { fetchRequestLog(); }, 5000);
 
 // ── Settings ──
 let settingsData = null;

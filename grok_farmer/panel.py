@@ -75,7 +75,9 @@ class FarmState:
         # Broadcast to WebSocket clients
         try:
             loop = asyncio.get_running_loop()
-            asyncio.run_coroutine_threadsafe(self._broadcast(entry), loop)
+            asyncio.run_coroutine_threadsafe(
+                self._broadcast(json.dumps({"type": "log", "line": entry})), loop
+            )
         except RuntimeError:
             pass
 
@@ -1028,7 +1030,7 @@ async def websocket_endpoint(ws: WebSocket):
         with state.lock:
             recent = state.logs[-50:]
         for line in recent:
-            await ws.send_text(line)
+            await ws.send_text(json.dumps({"type": "log", "line": line}))
         # Keep connection alive
         while True:
             await ws.receive_text()
