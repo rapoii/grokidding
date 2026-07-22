@@ -1,0 +1,39 @@
+{
+  "ninrouter": {
+    "base_url": "http://localhost:3000",
+    "password": "password-kamu",
+    "db_path": "C:/Users/Kamu/AppData/Roaming/9router/db/data.sqlite"
+  },
+  "email": {
+    "imap_host": "imap.migadu.com",
+    "imap_port": 993,
+    "email": "otp@domainmu.com",
+    "password": "password-imap-kamu",
+    "domain": "domainmu.com"
+  },
+  "proxy": {
+    "mode": "socks5",
+    "pool": [
+      "socks5://user:pass@proxy1.com:1080",
+      "socks5://user:pass@proxy2.com:1080"
+    ],
+    "adb": {
+      "enabled": false,
+      "device_serial": "DEVICE_SERIAL",
+      "adb_path": "adb"
+    }
+  },
+  "turnstile": {
+    "extension_path": "turnstile_patch/",
+    "max_retries": 15,
+    "timeout": 60
+  },
+  "signup": {
+    "password_length": 16,
+    "max_retries": 3
+  },
+  "output": {
+    "accounts_dir": "data/accounts/",
+    "logs_dir": "data/logs/"
+  }
+}

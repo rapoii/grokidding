@@ -82,9 +82,13 @@ npm install -g 9router
 9router
 ```
 
-### 5. Verifikasi
+### 5. Jalankan!
 
 ```bash
+# Langsung buka Web UI (default)
+python -m grok_farmer
+
+# Atau dry run dulu untuk testing
 python -m grok_farmer run --dry-run --count 1
 ```
 
@@ -152,6 +156,15 @@ Edit `config.json`:
 
 ## 🚀 Tutorial
 
+### Launcher (Default)
+
+```bash
+# Buka Web UI langsung (panel auto-start + browser terbuka)
+python -m grok_farmer
+```
+
+Navigasi pakai **arrow keys ↑↓**, Enter untuk pilih. Escape untuk keluar.
+
 ### CLI (Command Line)
 
 ```bash
@@ -183,6 +196,9 @@ python -m grok_farmer run [opsi]
 ```
 
 ### Web Panel
+
+> 💡 Panel otomatis jalan saat kamu jalankan `python -m grok_farmer` (launcher).
+> Atau jalankan manual:
 
 ```bash
 python -m grok_farmer panel --port 8083
