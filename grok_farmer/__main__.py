@@ -24,6 +24,8 @@ import json
 import sys
 import time
 import traceback
+import webbrowser
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -664,6 +666,57 @@ def cmd_panel(args):
     run_panel(host=args.host, port=args.port)
 
 
+def cmd_launcher(args):
+    """Interactive launcher — start panel and open browser."""
+    from .panel import run_panel
+
+    port = args.port or 8083
+    host = args.host or "127.0.0.1"
+    url = f"http://{host}:{port}"
+
+    print()
+    print("=" * 52)
+    print("  Grokidding v1.0.0")
+    print("=" * 52)
+    print(f"  Server : {url}")
+    print("=" * 52)
+    print()
+    print("  > Open Web UI")
+    print("    Exit")
+    print()
+
+    # Start panel in background thread
+    server_thread = threading.Thread(
+        target=run_panel, kwargs={"host": host, "port": port},
+        daemon=True,
+    )
+    server_thread.start()
+
+    # Wait a moment for server to start
+    time.sleep(1.5)
+
+    # Auto-open browser
+    webbrowser.open(url)
+    print(f"  [OK] Panel running at {url}")
+
+    while True:
+        try:
+            choice = input("\n  Pilih (1=Open Web UI, 2=Exit): ").strip()
+            if choice == "1":
+                webbrowser.open(url)
+                print("  [OK] Browser dibuka")
+            elif choice == "2":
+                print("\n  Sampai jumpa! 👋\n")
+                break
+            else:
+                print("  Pilihan tidak valid. Ketik 1 atau 2.")
+        except (KeyboardInterrupt, EOFError):
+            print("\n\n  Sampai jumpa! 👋\n")
+            break
+
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description="Grokidding -> 9Router")
     subparsers = parser.add_subparsers(dest="command")
@@ -682,12 +735,9 @@ def main():
     panel_parser.add_argument("--host", type=str, default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
     panel_parser.add_argument("--config", type=str, help="Config file path")
 
-    # Legacy mode: no subcommand = treat as run
-    parser.add_argument("--count", type=int, default=1, help=argparse.SUPPRESS)
-    parser.add_argument("--config", type=str, help=argparse.SUPPRESS)
-    parser.add_argument("--dry-run", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--no-proxy", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--headless", action="store_true", help=argparse.SUPPRESS)
+    # ── launcher (default: no subcommand) ──
+    parser.add_argument("--port", type=int, default=None, help="Panel port (default: 8083)")
+    parser.add_argument("--host", type=str, default=None, help="Bind host (default: 127.0.0.1)")
 
     args = parser.parse_args()
 
@@ -697,8 +747,8 @@ def main():
     elif args.command == "run":
         return cmd_run(args)
     else:
-        # Legacy mode: no subcommand given, use top-level args as "run"
-        return cmd_run(args)
+        # Default: interactive launcher
+        return cmd_launcher(args)
 
 
 if __name__ == "__main__":
