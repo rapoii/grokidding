@@ -627,7 +627,7 @@ def cmd_run(args):
     solver = TurnstileSolver(
         extension_path=tcfg.get("extension_path", "turnstile_patch/"),
         max_retries=tcfg.get("max_retries", 15),
-        timeout=tcfg.get("timeout", 60), debug=True, headless=args.headless,
+        timeout=tcfg.get("timeout", 60), debug=True,
     )
 
     results = []
@@ -745,7 +745,7 @@ def main():
     run_parser.add_argument("--config", type=str, help="Config file path")
     run_parser.add_argument("--dry-run", action="store_true", help="Generate credentials only")
     run_parser.add_argument("--no-proxy", action="store_true", help="Skip proxy rotation")
-    run_parser.add_argument("--headless", action="store_true", help="Run browser in headless mode")
+
 
     # ── panel ──
     panel_parser = subparsers.add_parser("panel", help="Start web control panel")

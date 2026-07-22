@@ -35,6 +35,7 @@ class FarmState:
     def __init__(self):
         self.lock = threading.Lock()
         self.running = False
+        self.stop_requested = False
         self.total = 0
         self.completed = 0
         self.successful = 0
@@ -49,6 +50,7 @@ class FarmState:
     def reset(self, count: int):
         with self.lock:
             self.running = True
+            self.stop_requested = False
             self.total = count
             self.completed = 0
             self.successful = 0
@@ -62,6 +64,7 @@ class FarmState:
     def finish(self):
         with self.lock:
             self.running = False
+            self.stop_requested = False
             self.finished_at = datetime.now(timezone.utc).isoformat()
             self.current_step = "idle"
 
@@ -116,7 +119,7 @@ class FarmRequest(BaseModel):
     count: int = 1
     proxy: bool = True
     dry_run: bool = False
-    headless: bool = False
+
 
 
 # ── 9Router Integration ──
@@ -386,12 +389,21 @@ async def start_farm(req: FarmRequest):
         return JSONResponse({"error": "Count must be 1-100"}, status_code=400)
 
     state.reset(req.count)
-    state.add_log(f"Starting farm: {req.count} account(s), proxy={'on' if req.proxy else 'off'}, dry_run={req.dry_run}, headless={req.headless}")
+    state.add_log(f"Starting farm: {req.count} account(s), proxy={'on' if req.proxy else 'off'}, dry_run={req.dry_run}")
 
-    thread = threading.Thread(target=_run_farm, args=(req.count, req.proxy, req.dry_run, req.headless), daemon=True)
+    thread = threading.Thread(target=_run_farm, args=(req.count, req.proxy, req.dry_run), daemon=True)
     thread.start()
 
     return JSONResponse({"started": True, "count": req.count})
+
+
+@app.post("/api/stop")
+async def stop_farm():
+    if not state.running:
+        return JSONResponse({"error": "No farming in progress"}, status_code=400)
+    state.stop_requested = True
+    state.add_log("Stop requested - finishing current account...")
+    return JSONResponse({"stopped": True})
 
 
 @app.delete("/api/accounts/{account_id}")
@@ -1066,7 +1078,7 @@ class _StdoutCapture(io.TextIOBase):
         pass
 
 
-def _run_farm(count: int, use_proxy: bool, dry_run: bool, headless: bool = False):
+def _run_farm(count: int, use_proxy: bool, dry_run: bool):
     """Background thread that runs the farming loop."""
     old_stdout = sys.stdout
     old_stderr = sys.stderr
@@ -1106,13 +1118,17 @@ def _run_farm(count: int, use_proxy: bool, dry_run: bool, headless: bool = False
         solver = TurnstileSolver(
             extension_path=tcfg.get("extension_path", "turnstile_patch/"),
             max_retries=tcfg.get("max_retries", 15),
-            timeout=tcfg.get("timeout", 60), debug=True, headless=headless,
+            timeout=tcfg.get("timeout", 60), debug=True,
         )
 
         for i in range(count):
             state.current_step = f"farming {i + 1}/{count}"
             state.completed = i
-            state.add_log(f"─── Account {i + 1}/{count} ───")
+            state.add_log(f"--- Account {i + 1}/{count} ---")
+
+            if state.stop_requested:
+                state.add_log(f"Stopped by user after {i} accounts.")
+                break
 
             result = run_single_account(
                 cfg, solver, proxy_rotator, email_reader, pusher, dry_run

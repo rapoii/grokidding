@@ -12,12 +12,12 @@ from typing import Optional, Tuple
 
 class TurnstileSolver:
     def __init__(self, extension_path: str, max_retries: int = 15,
-                 timeout: int = 60, debug: bool = False, headless: bool = False):
+                 timeout: int = 60, debug: bool = False):
         self.extension_path = os.path.abspath(extension_path)
         self.max_retries = max_retries
         self.timeout = timeout
         self.debug = debug
-        self.headless = headless
+
         self._browser = None
         self._proxy = None
         self._forwarder = None
@@ -39,8 +39,7 @@ class TurnstileSolver:
         opts.set_argument("--no-first-run")
         opts.set_argument("--no-default-browser-check")
 
-        if self.headless:
-            opts.headless(True)
+
 
         # Proxy support — SOCKS5 with auth needs local forwarder, others direct
         if self._proxy:

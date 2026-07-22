@@ -270,14 +270,13 @@ tbody td{padding:12px 20px;font-size:.85rem}
   <div class="controls">
     <span class="input-label">Count:</span>
     <input type="number" id="farmCount" class="input-num" value="1" min="1" max="50">
-    <label class="toggle" style="margin:0 8px" title="Run browser in headless mode (no visible window)">
-      <input type="checkbox" id="headlessToggle">
-      <span class="toggle-slider"></span>
-    </label>
-    <span class="input-label" style="margin-right:8px">Headless</span>
+
     <button id="btnFarm" class="btn btn-primary" onclick="startFarm()">
       <span class="spinner" id="farmSpinner"></span>
       <span id="btnFarmText">Start Farming</span>
+    </button>
+    <button id="btnStop" class="btn btn-ghost" onclick="stopFarm()" style="display:none">
+      Stop
     </button>
     <button id="btnRenew" class="btn btn-warning" onclick="checkAndRenew()">
       <span class="spinner" id="renewSpinner"></span>
@@ -579,6 +578,7 @@ function updateFarmUI(data) {
   const btn = document.getElementById('btnFarm');
   const btnText = document.getElementById('btnFarmText');
   const spinner = document.getElementById('farmSpinner');
+  const btnStop = document.getElementById('btnStop');
 
   if (data.running) {
     badge.className = 'status-badge running';
@@ -587,6 +587,7 @@ function updateFarmUI(data) {
     btn.disabled = true;
     btnText.textContent = `Farming... ${data.progress}%`;
     spinner.style.display = 'block';
+    btnStop.style.display = 'inline-flex';
   } else {
     badge.className = 'status-badge idle';
     text.textContent = data.current_step === 'done' ? 'Complete' : 'Idle';
@@ -594,6 +595,7 @@ function updateFarmUI(data) {
     btn.disabled = false;
     btnText.textContent = 'Start Farming';
     spinner.style.display = 'none';
+    btnStop.style.display = 'none';
   }
 }
 
@@ -617,14 +619,20 @@ function addLog(line, scroll = true) {
 // ── Actions ──
 let renewData = null;
 
+async function stopFarm() {
+  try {
+    await fetch('/api/stop', {method: 'POST'});
+  } catch {}
+}
+
 async function startFarm() {
   const count = parseInt(document.getElementById('farmCount').value) || 1;
-  const headless = document.getElementById('headlessToggle').checked;
+
   try {
     const r = await fetch('/api/farm', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({count, proxy: true, headless})
+      body: JSON.stringify({count, proxy: true})
     });
     if (!r.ok) {
       const err = await r.json();
