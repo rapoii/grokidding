@@ -77,10 +77,27 @@ class FarmState:
             if len(self.logs) > 500:
                 self.logs = self.logs[-500:]
         # Broadcast to WebSocket clients
+        self._try_broadcast_log(entry)
+
+    def broadcast_progress(self):
+        """Broadcast current farm state to all WebSocket clients."""
+        self._try_broadcast_progress()
+
+    def _try_broadcast_log(self, entry: str):
         if self._loop and self._ws_clients:
             try:
                 asyncio.run_coroutine_threadsafe(
                     self._broadcast(json.dumps({"type": "log", "line": entry})), self._loop
+                )
+            except Exception:
+                pass
+
+    def _try_broadcast_progress(self):
+        if self._loop and self._ws_clients:
+            try:
+                data = json.dumps({"type": "progress", "data": self.snapshot()})
+                asyncio.run_coroutine_threadsafe(
+                    self._broadcast(data), self._loop
                 )
             except Exception:
                 pass
@@ -391,6 +408,7 @@ async def start_farm(req: FarmRequest):
 
     state.reset(req.count)
     state.add_log(f"Starting farm: {req.count} account(s), proxy={'on' if req.proxy else 'off'}, dry_run={req.dry_run}")
+    state.broadcast_progress()
 
     thread = threading.Thread(target=_run_farm, args=(req.count, req.proxy, req.dry_run), daemon=True)
     thread.start()
@@ -1128,9 +1146,11 @@ def _run_farm(count: int, use_proxy: bool, dry_run: bool):
             state.current_step = f"farming {i + 1}/{count}"
             state.completed = i
             state.add_log(f"--- Account {i + 1}/{count} ---")
+            state.broadcast_progress()
 
             if state.stop_requested:
                 state.add_log(f"Stopped by user after {i} accounts.")
+                state.broadcast_progress()
                 break
 
             result = run_single_account(
@@ -1139,12 +1159,13 @@ def _run_farm(count: int, use_proxy: bool, dry_run: bool):
 
             if result.get("success"):
                 state.successful += 1
-                state.add_log(f"✓ SUCCESS: {result.get('email', '?')}")
+                state.add_log(f"SUCCESS: {result.get('email', '?')}")
             else:
                 state.failed += 1
-                state.add_log(f"✗ FAILED: {result.get('email', '?')} — {result.get('error', '?')}")
+                state.add_log(f"FAILED: {result.get('email', '?')} - {result.get('error', '?')}")
 
             state.current_email = result.get("email", "")
+            state.broadcast_progress()
 
             if i < count - 1:
                 solver.close()
@@ -1161,6 +1182,7 @@ def _run_farm(count: int, use_proxy: bool, dry_run: bool):
         sys.stderr = old_stderr
         state.finish()
         state.add_log("Farm run complete.")
+        state.broadcast_progress()
 
 
 # ── Server Runner ──

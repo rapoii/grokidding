@@ -637,6 +637,11 @@ async function startFarm() {
     if (!r.ok) {
       const err = await r.json();
       addLog('[ERROR] ' + (err.detail || 'Failed to start'));
+    } else {
+      document.getElementById('btnStop').style.display = 'inline-flex';
+      document.getElementById('btnFarm').disabled = true;
+      document.getElementById('btnFarmText').textContent = 'Farming...';
+      document.getElementById('farmSpinner').style.display = 'block';
     }
   } catch (e) {
     addLog('[ERROR] ' + e.message);
