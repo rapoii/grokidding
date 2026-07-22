@@ -6,7 +6,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.14-blue?logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
-![Stars](https://img.shields.io/github/stars/nousresearch/grokidding?style=flat)
+![Stars](https://img.shields.io/github/stars/rapoii/grokidding?style=flat)
 ![Status](https://img.shields.io/badge/Status-Active-brightgreen)
 
 > Buat akun Grok/xAI secara otomatis, ambil OAuth token, dan push ke 9Router sebagai provider connection.
