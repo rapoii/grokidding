@@ -630,12 +630,13 @@ async function stopFarm() {
 
 async function startFarm() {
   const count = parseInt(document.getElementById('farmCount').value) || 1;
+  const useProxy = settingsData?.proxy?.mode === 'socks5' || false;
 
   try {
     const r = await fetch('/api/farm', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({count, proxy: true})
+      body: JSON.stringify({count, proxy: useProxy})
     });
     if (!r.ok) {
       const err = await r.json();
@@ -731,7 +732,7 @@ async function confirmRenew() {
     const r = await fetch('/api/renew', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({count, proxy: true})
+      body: JSON.stringify({count, proxy: settingsData?.proxy?.mode === 'socks5'})
     });
     const d = await r.json();
     if (!r.ok) {
