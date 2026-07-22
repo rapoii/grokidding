@@ -158,6 +158,10 @@ Edit `config.json`:
 
 ## 🚀 Tutorial
 
+<p align="center">
+  <img src="docs/screenshot-dashboard.png" alt="Grokidding Dashboard" width="90%">
+</p>
+
 ### 1. Jalankan Grokidding
 
 ```bash
@@ -173,6 +177,10 @@ Di dashboard Web UI:
 2. Aktifkan **proxy** jika tersedia
 3. Klik **"Start Farming"**
 4. Progress berjalan **real-time** via WebSocket
+
+<p align="center">
+  <img src="docs/screenshot-full.png" alt="Grokidding Full Dashboard" width="90%">
+</p>
 
 ### 3. Pantau Akun
 
