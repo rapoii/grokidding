@@ -21,11 +21,13 @@ Key discoveries:
 """
 import argparse
 import json
+import os
 import sys
 import time
 import traceback
 import webbrowser
 import threading
+import msvcrt
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -667,23 +669,12 @@ def cmd_panel(args):
 
 
 def cmd_launcher(args):
-    """Interactive launcher — start panel and open browser."""
+    """Interactive launcher with arrow-key menu."""
     from .panel import run_panel
 
     port = args.port or 8083
     host = args.host or "127.0.0.1"
     url = f"http://{host}:{port}"
-
-    print()
-    print("=" * 52)
-    print("  Grokidding v1.0.0")
-    print("=" * 52)
-    print(f"  Server : {url}")
-    print("=" * 52)
-    print()
-    print("  > Open Web UI")
-    print("    Exit")
-    print()
 
     # Start panel in background thread
     server_thread = threading.Thread(
@@ -691,31 +682,58 @@ def cmd_launcher(args):
         daemon=True,
     )
     server_thread.start()
-
-    # Wait a moment for server to start
     time.sleep(1.5)
-
-    # Auto-open browser
     webbrowser.open(url)
-    print(f"  [OK] Panel running at {url}")
+
+    options = ["Open Web UI", "Exit"]
+    selected = 0
+
+    def draw_menu():
+        os.system("cls" if os.name == "nt" else "clear")
+        print()
+        print("=" * 52)
+        print("  Grokidding v1.0.0")
+        print("=" * 52)
+        print(f"  Server : {url}")
+        print("=" * 52)
+        print()
+        for i, opt in enumerate(options):
+            prefix = "  > " if i == selected else "    "
+            print(f"{prefix}{opt}")
+        print()
+        print("  (Arrow keys to navigate, Enter to select)")
+
+    draw_menu()
 
     while True:
         try:
-            choice = input("\n  Pilih (1=Open Web UI, 2=Exit): ").strip()
-            if choice == "1":
-                webbrowser.open(url)
-                print("  [OK] Browser dibuka")
-            elif choice == "2":
-                print("\n  Sampai jumpa! 👋\n")
+            key = msvcrt.getch()
+            # Arrow keys: first byte is 0xE0 or 0x00, second byte is the actual key
+            if key in (b"\xe0", b"\x00"):
+                key2 = msvcrt.getch()
+                if key2 == b"H":  # Up arrow
+                    selected = (selected - 1) % len(options)
+                    draw_menu()
+                elif key2 == b"P":  # Down arrow
+                    selected = (selected + 1) % len(options)
+                    draw_menu()
+            elif key == b"\r":  # Enter
+                if selected == 0:  # Open Web UI
+                    webbrowser.open(url)
+                elif selected == 1:  # Exit
+                    os.system("cls" if os.name == "nt" else "clear")
+                    print("\n  Sampai jumpa! \U0001f44b\n")
+                    break
+            elif key == b"\x1b":  # Escape
+                os.system("cls" if os.name == "nt" else "clear")
+                print("\n  Sampai jumpa! \U0001f44b\n")
                 break
-            else:
-                print("  Pilihan tidak valid. Ketik 1 atau 2.")
-        except (KeyboardInterrupt, EOFError):
-            print("\n\n  Sampai jumpa! 👋\n")
+        except KeyboardInterrupt:
+            os.system("cls" if os.name == "nt" else "clear")
+            print("\n  Sampai jumpa! \U0001f44b\n")
             break
 
     return 0
-
 
 def main():
     parser = argparse.ArgumentParser(description="Grokidding -> 9Router")
