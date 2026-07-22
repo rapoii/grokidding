@@ -222,16 +222,35 @@ class FarmRequest(BaseModel):
 
 # ── 9Router Integration ──
 
-ROUTER_DB = Path("C:/Users/Rafi/AppData/Roaming/9router/db/data.sqlite")
+def _get_router_db() -> Path:
+    """Get 9Router DB path from config, with fallback."""
+    try:
+        cfg = load_config()
+        db_path = cfg.get("ninrouter", {}).get("db_path", "")
+        if db_path:
+            p = Path(db_path)
+            if p.exists():
+                return p
+    except Exception:
+        pass
+    # Common fallback paths
+    for fallback in [
+        Path.home() / "AppData" / "Roaming" / "9router" / "db" / "data.sqlite",
+        Path.home() / ".9router" / "db" / "data.sqlite",
+    ]:
+        if fallback.exists():
+            return fallback
+    return Path("data.sqlite")  # will be checked for existence later
 
 
 def _load_accounts() -> list[dict]:
     """Load grok accounts from 9Router SQLite database."""
-    if not ROUTER_DB.exists():
+    router_db = _get_router_db()
+    if not router_db.exists():
         return []
     try:
         import sqlite3 as _sql
-        db = _sql.connect(f"file:{ROUTER_DB}?immutable=1", uri=True)
+        db = _sql.connect(f"file:{router_db}?immutable=1", uri=True)
         db.row_factory = _sql.Row
         rows = db.execute("""
             SELECT id, name, email, isActive, data, provider, authType,
@@ -284,7 +303,7 @@ def _delete_router_account(account_id: str) -> bool:
     """Delete (deactivate) an account from 9Router SQLite."""
     try:
         import sqlite3 as _sql
-        db = _sql.connect(str(ROUTER_DB))
+        db = _sql.connect(str(_get_router_db()))
         cur = db.execute(
             "UPDATE providerConnections SET isActive=0 WHERE id=? AND provider LIKE '%grok%'",
             (account_id,)
