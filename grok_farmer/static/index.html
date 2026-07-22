@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Grokidding</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0f1117;--bg2:#1a1d27;--bg3:#232735;--border:#2a2e3d;
+  --text:#e2e8f0;--text2:#94a3b8;--text3:#64748b;
+  --accent:#6366f1;--accent2:#818cf8;--accent-ghost:rgba(99,102,241,.12);
+  --green:#22c55e;--green-ghost:rgba(34,197,94,.12);
+  --red:#ef4444;--red-ghost:rgba(239,68,68,.12);
+  --yellow:#eab308;--yellow-ghost:rgba(234,179,8,.12);
+  --radius:12px;--radius-sm:8px;
+  --font:'Inter',system-ui,-apple-system,sans-serif;
+}
+html{font-size:14px}
+body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;line-height:1.5}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--text3)}
+
+/* ── Layout ── */
+.container{max-width:1200px;margin:0 auto;padding:24px 20px}
+
+/* ── Header ── */
+.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:32px;padding-bottom:20px;border-bottom:1px solid var(--border)}
+.header h1{font-size:1.5rem;font-weight:700;letter-spacing:-.02em;display:flex;align-items:center;gap:10px}
+.header h1 .logo{width:32px;height:32px;background:var(--accent);border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;font-size:.9rem;font-weight:700;color:#fff}
+.status-badge{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:999px;font-size:.8rem;font-weight:500;transition:all .3s ease}
+.status-badge.idle{background:var(--bg3);color:var(--text2)}
+.status-badge.running{background:var(--accent-ghost);color:var(--accent2)}
+.status-badge.running .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);animation:pulse 1.5s ease infinite}
+.status-badge .dot{width:8px;height:8px;border-radius:50%;background:var(--text3)}
+
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.8)}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes slideIn{from{opacity:0;transform:translateX(-12px)}to{opacity:1;transform:translateX(0)}}
+
+/* ── Stats ── */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}
+.stat-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:20px;transition:all .25s ease;animation:fadeIn .4s ease}
+.stat-card:hover{border-color:var(--accent);transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.3)}
+.stat-label{font-size:.75rem;font-weight:500;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}
+.stat-value{font-size:1.75rem;font-weight:700;letter-spacing:-.02em}
+.stat-value.green{color:var(--green)}
+.stat-value.yellow{color:var(--yellow)}
+.stat-value.red{color:var(--red)}
+.stat-value.accent{color:var(--accent2)}
+
+/* ── Controls ── */
+.controls{display:flex;align-items:center;gap:12px;margin-bottom:24px;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:var(--radius-sm);font-family:var(--font);font-size:.85rem;font-weight:600;border:none;cursor:pointer;transition:all .2s ease}
+.btn:active{transform:scale(.97)}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{background:var(--accent2);box-shadow:0 4px 16px rgba(99,102,241,.35)}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.btn-ghost{background:transparent;color:var(--text2);border:1px solid var(--border)}
+.btn-ghost:hover{border-color:var(--text3);color:var(--text)}
+.btn-danger{background:var(--red-ghost);color:var(--red);border:1px solid transparent}
+.btn-danger:hover{background:var(--red);color:#fff}
+.btn-warning{background:var(--yellow-ghost);color:var(--yellow);border:1px solid transparent}
+.btn-warning:hover{background:var(--yellow);color:#000}
+.btn-warning:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.btn-sm{padding:6px 12px;font-size:.75rem}
+
+.input-num{background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 14px;color:var(--text);font-family:var(--font);font-size:.85rem;width:80px;text-align:center;transition:border-color .2s}
+.input-num:focus{outline:none;border-color:var(--accent)}
+.input-label{font-size:.8rem;color:var(--text3);margin-right:4px}
+
+.spinner{width:16px;height:16px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;display:none}
+.btn-primary.running .spinner{display:block}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── Table ── */
+.table-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:24px;animation:fadeIn .5s ease}
+.table-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border)}
+.table-header h2{font-size:1rem;font-weight:600}
+.table-header .count{font-size:.75rem;color:var(--text3);background:var(--bg3);padding:3px 10px;border-radius:999px}
+
+table{width:100%;border-collapse:collapse}
+thead th{text-align:left;padding:10px 20px;font-size:.7rem;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border)}
+tbody tr{border-bottom:1px solid var(--border);transition:background .15s}
+tbody tr:last-child{border-bottom:none}
+tbody tr:hover{background:var(--bg3)}
+tbody td{padding:12px 20px;font-size:.85rem}
+.email-cell{font-weight:500;color:var(--text)}
+.badge{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;font-size:.7rem;font-weight:600}
+.badge-success{background:var(--green-ghost);color:var(--green)}
+.badge-fail{background:var(--red-ghost);color:var(--red)}
+.badge-pending{background:var(--yellow-ghost);color:var(--yellow)}
+.empty-state{text-align:center;padding:48px 20px;color:var(--text3)}
+.empty-state .icon{font-size:2rem;margin-bottom:8px;opacity:.5}
+
+/* ── Logs ── */
+.log-panel{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;animation:fadeIn .6s ease}
+.log-header{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--border)}
+.log-header h2{font-size:1rem;font-weight:600}
+.log-header .live-dot{width:8px;height:8px;border-radius:50%;background:var(--green);animation:pulse 1.5s ease infinite}
+.log-body{height:240px;overflow-y:auto;padding:12px 16px;font-family:'JetBrains Mono',monospace;font-size:.75rem;line-height:1.7}
+.log-line{color:var(--text2);animation:slideIn .2s ease}
+.log-line .ts{color:var(--text3)}
+.log-line.success{color:var(--green)}
+.log-line.error{color:var(--red)}
+.log-line.info{color:var(--accent2)}
+
+/* ── Responsive ── */
+@media(max-width:768px){
+  .stats{grid-template-columns:repeat(2,1fr)}
+  .controls{flex-direction:column;align-items:stretch}
+  table{font-size:.8rem}
+  thead th,tbody td{padding:8px 12px}
+}
+
+/* ── Modal ── */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);backdrop-filter:blur(4px);z-index:1000;align-items:center;justify-content:center}
+.modal-overlay.show{display:flex}
+.modal{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:28px;max-width:520px;width:90%;animation:fadeIn .2s ease}
+.modal h3{font-size:1.1rem;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.modal p{color:var(--text2);font-size:.85rem;line-height:1.6;margin-bottom:8px}
+.modal .quota-list{max-height:200px;overflow-y:auto;margin:12px 0;padding:8px;background:var(--bg);border-radius:var(--radius-sm);border:1px solid var(--border)}
+.modal .quota-item{display:flex;justify-content:space-between;align-items:center;padding:6px 8px;font-size:.8rem;border-bottom:1px solid var(--border)}
+.modal .quota-item:last-child{border-bottom:none}
+.modal .quota-item .status-dot{width:8px;height:8px;border-radius:50%;margin-right:8px;flex-shrink:0}
+.modal .quota-item .status-dot.expired{background:var(--red)}
+.modal .quota-item .status-dot.active{background:var(--green)}
+.modal .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}
+.modal .count-input{background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;color:var(--text);font-family:var(--font);font-size:.85rem;width:60px;text-align:center}
+.modal .count-label{font-size:.8rem;color:var(--text3);margin-right:6px}
+
+.quota-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;font-size:.65rem;font-weight:600}
+.quota-ok{background:var(--green-ghost);color:var(--green)}
+.quota-warn{background:var(--yellow-ghost);color:var(--yellow)}
+.quota-dead{background:var(--red-ghost);color:var(--red)}
+
+/* ── Quota Panel ── */
+.quota-panel{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:24px;animation:fadeIn .5s ease}
+.quota-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border)}
+.quota-header h2{font-size:1rem;font-weight:600}
+.quota-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;padding:20px}
+.quota-metric{text-align:center}
+.quota-metric .label{font-size:.7rem;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
+.quota-metric .value{font-size:1.4rem;font-weight:700}
+.quota-metric .sub{font-size:.7rem;color:var(--text3);margin-top:2px}
+.quota-bar{height:6px;background:var(--bg);border-radius:3px;margin:0 20px 16px;overflow:hidden}
+.quota-bar-fill{height:100%;border-radius:3px;transition:width .6s ease}
+
+/* ── Request Log ── */
+.req-log-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:24px;animation:fadeIn .6s ease}
+.req-log-header{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--border)}
+.req-log-header h2{font-size:1rem;font-weight:600;display:flex;align-items:center;gap:8px}
+.req-log-header .live-dot{width:8px;height:8px;border-radius:50%;background:var(--green);animation:pulse 1.5s ease infinite}
+.req-log-body{max-height:360px;overflow-y:auto}
+.req-log-body table{width:100%;border-collapse:collapse}
+.req-log-body thead th{position:sticky;top:0;background:var(--bg2);z-index:1;text-align:left;padding:8px 12px;font-size:.65rem;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border)}
+.req-log-body tbody td{padding:6px 12px;font-size:.75rem;border-bottom:1px solid var(--border);font-family:'JetBrains Mono',monospace}
+.req-log-body tbody tr:hover{background:var(--bg3)}
+.token-chip{display:inline-flex;align-items:center;padding:1px 6px;border-radius:4px;font-size:.65rem;font-weight:600}
+.token-in{background:rgba(99,102,241,.15);color:var(--accent2)}
+.token-out{background:var(--green-ghost);color:var(--green)}
+.token-cache{background:var(--yellow-ghost);color:var(--yellow)}
+.token-total{background:var(--bg3);color:var(--text2)}
+.status-ok{color:var(--green)}
+.status-err{color:var(--red)}
+
+/* ── Settings Modal ── */
+.settings-btn{background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 14px;color:var(--text2);font-family:var(--font);font-size:.8rem;font-weight:500;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:all .2s}
+.settings-btn:hover{border-color:var(--accent);color:var(--accent2)}
+.modal-settings{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);width:600px;max-height:85vh;overflow:hidden;display:flex;flex-direction:column;animation:fadeIn .3s ease}
+.modal-settings h3{font-size:1.1rem;font-weight:700;padding:20px 24px 0;margin-bottom:16px}
+.settings-tabs{display:flex;gap:4px;padding:0 24px;border-bottom:1px solid var(--border)}
+.settings-tab{padding:10px 16px;font-size:.8rem;font-weight:500;color:var(--text3);cursor:pointer;border-bottom:2px solid transparent;transition:all .2s}
+.settings-tab:hover{color:var(--text)}
+.settings-tab.active{color:var(--accent2);border-bottom-color:var(--accent)}
+.settings-body{padding:20px 24px;overflow-y:auto;flex:1}
+.settings-section{display:none}
+.settings-section.active{display:block}
+.field{margin-bottom:16px}
+.field label{display:block;font-size:.75rem;font-weight:500;color:var(--text3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px}
+.field input,.field select,.field textarea{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 14px;color:var(--text);font-family:var(--font);font-size:.85rem;transition:border-color .2s}
+.field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--accent)}
+.field select{cursor:pointer}
+.field textarea{resize:vertical;min-height:60px}
+.field-row{display:flex;gap:12px;align-items:flex-end}
+.field-row .field{flex:1}
+.field-row .btn{margin-bottom:16px}
+.toggle-row{display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border)}
+.toggle-row:last-child{border-bottom:none}
+.toggle-label{font-size:.85rem;font-weight:500}
+.toggle-desc{font-size:.75rem;color:var(--text3);margin-top:2px}
+.toggle{position:relative;width:44px;height:24px;cursor:pointer}
+.toggle input{opacity:0;width:0;height:0}
+.toggle-slider{position:absolute;inset:0;background:var(--bg3);border:1px solid var(--border);border-radius:999px;transition:all .3s}
+.toggle-slider:before{content:'';position:absolute;width:18px;height:18px;left:2px;top:2px;background:var(--text3);border-radius:50%;transition:all .3s}
+.toggle input:checked+.toggle-slider{background:var(--accent);border-color:var(--accent)}
+.toggle input:checked+.toggle-slider:before{transform:translateX(20px);background:#fff}
+.proxy-list{list-style:none;margin:12px 0}
+.proxy-item{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:6px;font-size:.8rem;font-family:monospace;transition:all .2s}
+.proxy-item:hover{border-color:var(--text3)}
+.proxy-item .ip{color:var(--accent2)}
+.proxy-item .remove{color:var(--red);cursor:pointer;padding:2px 6px;border-radius:4px;font-size:.7rem}
+.proxy-item .remove:hover{background:var(--red-ghost)}
+.proxy-test{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:.8rem}
+.proxy-test.ok{color:var(--green)}
+.proxy-test.err{color:var(--red)}
+.proxy-test.testing{color:var(--yellow)}
+.settings-footer{display:flex;justify-content:flex-end;gap:10px;padding:16px 24px;border-top:1px solid var(--border)}
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Header -->
+  <div class="header">
+    <h1><span class="logo">G</span> Grokidding</h1>
+    <div style="display:flex;align-items:center;gap:12px">
+      <button class="settings-btn" onclick="openSettings()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+        Settings
+      </button>
+      <div id="statusBadge" class="status-badge idle">
+      <span class="dot"></span>
+      <span id="statusText">Idle</span>
+    </div>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats">
+    <div class="stat-card">
+      <div class="stat-label">Total Connections</div>
+      <div class="stat-value accent" id="statTotal">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Active</div>
+      <div class="stat-value green" id="statActive">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Exhausted</div>
+      <div class="stat-value yellow" id="statExhausted">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Health Rate</div>
+      <div class="stat-value" id="statRate">0%</div>
+    </div>
+  </div>
+
+  <!-- Quota Panel -->
+  <div class="quota-panel" id="quotaPanel">
+    <div class="quota-header">
+      <h2>Query Quota</h2>
+      <span style="font-size:.75rem;color:var(--text3)" id="quotaAccounts">0 accounts</span>
+    </div>
+    <div class="quota-grid">
+      <div class="quota-metric">
+        <div class="label">Total Limit</div>
+        <div class="value accent" id="quotaTotal">0</div>
+        <div class="sub" id="quotaTotalSub">0 accounts x 1M</div>
+      </div>
+      <div class="quota-metric">
+        <div class="label">Remaining</div>
+        <div class="value green" id="quotaRemaining">0</div>
+        <div class="sub" id="quotaRemainingSub">0% available</div>
+      </div>
+      <div class="quota-metric">
+        <div class="label">Used (24h)</div>
+        <div class="value" id="quotaUsed" style="color:var(--text)">0</div>
+        <div class="sub" id="quotaUsedSub">0 queries</div>
+      </div>
+    </div>
+    <div class="quota-bar">
+      <div class="quota-bar-fill" id="quotaBarFill" style="width:0%;background:var(--green)"></div>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls">
+    <span class="input-label">Count:</span>
+    <input type="number" id="farmCount" class="input-num" value="1" min="1" max="50">
+    <label class="toggle" style="margin:0 8px" title="Run browser in headless mode (no visible window)">
+      <input type="checkbox" id="headlessToggle">
+      <span class="toggle-slider"></span>
+    </label>
+    <span class="input-label" style="margin-right:8px">Headless</span>
+    <button id="btnFarm" class="btn btn-primary" onclick="startFarm()">
+      <span class="spinner" id="farmSpinner"></span>
+      <span id="btnFarmText">Start Farming</span>
+    </button>
+    <button id="btnRenew" class="btn btn-warning" onclick="checkAndRenew()">
+      <span class="spinner" id="renewSpinner"></span>
+      <span id="btnRenewText">Renew</span>
+    </button>
+    <button class="btn btn-ghost" onclick="refreshAll()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+      Refresh
+    </button>
+  </div>
+
+  <!-- Accounts Table -->
+  <div class="table-wrap">
+    <div class="table-header">
+      <h2>Accounts</h2>
+      <span class="count" id="accountCount">0 accounts</span>
+    </div>
+    <div id="tableBody">
+      <div class="empty-state">
+        <div class="icon">📭</div>
+        <div>No accounts yet. Start farming to create accounts.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Request Log -->
+  <div class="req-log-wrap">
+    <div class="req-log-header">
+      <h2><span class="live-dot"></span> Request Log</h2>
+      <span style="font-size:.75rem;color:var(--text3)" id="reqLogCount">0 requests</span>
+    </div>
+    <div class="req-log-body" id="reqLogBody">
+      <table>
+        <thead><tr>
+          <th>Time</th><th>Conn</th><th>Model</th><th>Input</th><th>Output</th><th>Cache</th><th>Total</th><th>Quota</th><th>Status</th><th>ms</th>
+        </tr></thead>
+        <tbody id="reqLogTbody">
+          <tr><td colspan="10" style="text-align:center;color:var(--text3);padding:24px">No requests yet. Use the proxy endpoint at <code>/v1/responses</code> to see logs here.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Logs -->
+  <div class="log-panel">
+    <div class="log-header">
+      <h2>Live Logs</h2>
+      <div class="live-dot"></div>
+    </div>
+    <div class="log-body" id="logBody">
+      <div class="log-line info">Waiting for activity...</div>
+    </div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div class="modal-overlay" id="settingsModal">
+    <div class="modal-settings">
+      <h3>Settings</h3>
+      <div class="settings-tabs">
+        <div class="settings-tab active" onclick="switchSettingsTab('proxy')">IP Rotation</div>
+        <div class="settings-tab" onclick="switchSettingsTab('email')">Email</div>
+        <div class="settings-tab" onclick="switchSettingsTab('router')">9Router</div>
+      </div>
+      <div class="settings-body">
+
+        <!-- IP Rotation Tab -->
+        <div class="settings-section active" id="tab-proxy">
+          <div class="field">
+            <label>IP Rotation Mode</label>
+            <select id="proxyMode" onchange="onRotationModeChange()">
+              <option value="off">Off — Tidak rotasi IP</option>
+              <option value="socks5">Proxy — Rotasi via proxy pool (SOCKS5/4, HTTP, HTTPS)</option>
+              <option value="adb">ADB Airplane Mode — Rotasi via HP</option>
+            </select>
+          </div>
+
+          <!-- Off Mode Warning -->
+          <div id="offModeWarning" style="display:none;margin-top:12px;padding:12px 14px;background:var(--yellow-ghost);border:1px solid var(--yellow);border-radius:var(--radius-sm);font-size:.8rem;color:var(--yellow);line-height:1.5">
+            <strong style="display:block;margin-bottom:4px">&#9888; Mode Off — Tidak Ada Rotasi IP</strong>
+            Browser akan jalan dengan IP asli kamu (hotspot/WiFi). xAI bisa blokir OTP setelah 3-4 signup dari IP yang sama. Mode ini cocok untuk testing atau bikin 1-2 akun saja.
+          </div>
+
+          <!-- SOCKS5 Section -->
+          <div id="proxyPoolSection" style="display:none;margin-top:16px">
+            <div class="field">
+              <label>Proxy Pool</label>
+              <ul class="proxy-list" id="proxyList"></ul>
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label>Tambah Proxy</label>
+                <input type="text" id="proxyNewInput" placeholder="socks5:// atau http://user:pass@host:port">
+              </div>
+              <button class="btn btn-ghost" onclick="addProxy()">+</button>
+            </div>
+            <button class="btn btn-ghost btn-sm" onclick="testProxy()">Test Proxy</button>
+            <div class="proxy-test" id="proxyTestResult"></div>
+          </div>
+
+          <!-- ADB Section -->
+          <div id="adbSection" style="display:none;margin-top:16px">
+            <div class="field">
+              <label>ADB Path</label>
+              <input type="text" id="adbPath" placeholder="D:/Software/Sdk/platform-tools/adb.exe">
+            </div>
+            <div class="field">
+              <label>Device Serial</label>
+              <input type="text" id="adbSerial" placeholder="ac79aaf3">
+            </div>
+            <button class="btn btn-ghost btn-sm" onclick="testAdb()">Test ADB Connection</button>
+            <div class="proxy-test" id="adbTestResult"></div>
+          </div>
+        </div>
+
+        <!-- Email Tab -->
+        <div class="settings-section" id="tab-email">
+          <div class="field">
+            <label>IMAP Host</label>
+            <input type="text" id="emailHost" placeholder="imap.migadu.com">
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label>IMAP Port</label>
+              <input type="number" id="emailPort" value="993">
+            </div>
+            <div class="field">
+              <label>Email</label>
+              <input type="email" id="emailAddr" placeholder="otp@domainmu.com">
+            </div>
+          </div>
+          <div class="field">
+            <label>Password</label>
+            <input type="password" id="emailPass" placeholder="••••••••">
+          </div>
+          <div class="field">
+            <label>Domain (untuk generate email)</label>
+            <input type="text" id="emailDomain" placeholder="domainmu.com">
+          </div>
+        </div>
+
+        <!-- 9Router Tab -->
+        <div class="settings-section" id="tab-router">
+          <div class="field">
+            <label>Base URL</label>
+            <input type="text" id="routerUrl" placeholder="https://router.example.com">
+          </div>
+          <div class="field">
+            <label>Password</label>
+            <input type="password" id="routerPass" placeholder="••••••••">
+          </div>
+          <div class="field">
+            <label>SQLite DB Path</label>
+            <input type="text" id="routerDbPath" placeholder="C:/Users/Rafi/AppData/Roaming/9router/db/data.sqlite">
+          </div>
+        </div>
+
+      </div>
+      <div class="settings-footer">
+        <button class="btn btn-ghost" onclick="closeSettings()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Renew Modal -->
+  <div class="modal-overlay" id="renewModal">
+    <div class="modal">
+      <h3>Renew Expired Accounts</h3>
+      <div id="renewContent">
+        <p>Checking quota...</p>
+      </div>
+      <div class="actions">
+        <button class="btn btn-ghost" onclick="closeRenewModal()">Cancel</button>
+        <button class="btn btn-warning" id="btnConfirmRenew" onclick="confirmRenew()">
+          <span class="spinner" id="confirmRenewSpinner"></span>
+          Renew Accounts
+        </button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+let ws = null;
+let accounts = [];
+
+// ── WebSocket ──
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws`);
+  ws.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'progress') updateFarmUI(msg.data);
+      if (msg.type === 'log') addLog(msg.line);
+      if (msg.type === 'request_log') addRequestLogEntry(msg.data);
+    } catch {}
+  };
+  ws.onclose = () => setTimeout(connectWS, 3000);
+  ws.onerror = () => {};
+  // Ping every 30s
+  setInterval(() => { if (ws?.readyState === 1) ws.send('ping'); }, 30000);
+}
+
+// ── Fetch Data ──
+async function fetchStats() {
+  try {
+    const r = await fetch('/api/stats');
+    const d = await r.json();
+    document.getElementById('statTotal').textContent = d.total;
+    document.getElementById('statActive').textContent = d.active;
+    document.getElementById('statExhausted').textContent = d.exhausted;
+    document.getElementById('statRate').textContent = d.rate + '%';
+    if (d.farm) updateFarmUI(d.farm);
+  } catch {}
+}
+
+async function fetchAccounts() {
+  try {
+    const r = await fetch('/api/accounts');
+    accounts = await r.json();
+    renderAccounts();
+  } catch {}
+}
+
+async function fetchLogs() {
+  try {
+    const r = await fetch('/api/logs');
+    const d = await r.json();
+    const logBody = document.getElementById('logBody');
+    logBody.innerHTML = '';
+    const lines = [...(d.file_logs || []), ...(d.panel_logs || [])];
+    lines.slice(-100).forEach(l => addLog(l, false));
+    logBody.scrollTop = logBody.scrollHeight;
+  } catch {}
+}
+
+// ── Quota ──
+async function fetchQuota() {
+  try {
+    const r = await fetch('/api/quota');
+    if (!r.ok) return;
+    const d = await r.json();
+    const fmt = (n) => {
+      if (n >= 1000000) return (n/1000000).toFixed(1) + 'M';
+      if (n >= 1000) return (n/1000).toFixed(0) + 'K';
+      return n.toString();
+    };
+    document.getElementById('quotaTotal').textContent = fmt(d.total_limit);
+    document.getElementById('quotaTotalSub').textContent = d.total_accounts + ' accounts x ' + (d.total_accounts > 0 ? fmt(Math.round(d.total_limit / d.total_accounts)) : '?');
+    document.getElementById('quotaAccounts').textContent = d.total_accounts + ' accounts';
+    document.getElementById('quotaRemaining').textContent = fmt(d.total_remaining);
+    const pct = d.total_limit > 0 ? Math.round(d.total_remaining / d.total_limit * 100) : 0;
+    document.getElementById('quotaRemainingSub').textContent = pct + '% available';
+    document.getElementById('quotaUsed').textContent = fmt(d.total_used);
+    document.getElementById('quotaUsedSub').textContent = fmt(d.total_used) + ' queries';
+    // Progress bar
+    const bar = document.getElementById('quotaBarFill');
+    bar.style.width = pct + '%';
+    bar.style.background = pct > 50 ? 'var(--green)' : pct > 20 ? 'var(--yellow)' : 'var(--red)';
+  } catch {}
+}
+
+// ── Request Log ──
+let reqLogEntries = [];
+async function fetchRequestLog() {
+  try {
+    const r = await fetch('/api/request-log?limit=50');
+    if (!r.ok) return;
+    const d = await r.json();
+    reqLogEntries = d.logs || [];
+    renderRequestLog();
+  } catch {}
+}
+
+function renderRequestLog() {
+  const tbody = document.getElementById('reqLogTbody');
+  document.getElementById('reqLogCount').textContent = reqLogEntries.length + ' requests';
+  if (reqLogEntries.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text3);padding:24px">No requests yet. Use the proxy endpoint at <code>/v1/responses</code> to see logs here.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = reqLogEntries.map(l => {
+    const statusCls = l.status === 'completed' ? 'status-ok' : (l.status?.startsWith('error') ? 'status-err' : '');
+    const statusText = l.status === 'completed' ? 'OK' : l.status || '?';
+    return `<tr>
+      <td style="color:var(--text3)">${esc(l.time || '')}</td>
+      <td>${esc(l.conn || '')}</td>
+      <td style="color:var(--accent2)">${esc(l.model || '')}</td>
+      <td><span class="token-chip token-in">${(l.input_tokens||0).toLocaleString()}</span></td>
+      <td><span class="token-chip token-out">${(l.output_tokens||0).toLocaleString()}</span></td>
+      <td><span class="token-chip token-cache">${(l.cached_tokens||0).toLocaleString()}</span></td>
+      <td><span class="token-chip token-total">${(l.total_tokens||0).toLocaleString()}</span></td>
+      <td style="color:var(--text3)">${l.remaining != null ? (l.remaining/1000).toFixed(0)+'K' : '-'}</td>
+      <td class="${statusCls}">${esc(statusText)}</td>
+      <td style="color:var(--text3)">${l.elapsed != null ? (l.elapsed*1000).toFixed(0) : '-'}</td>
+    </tr>`;
+  }).reverse().join('');
+  // Auto-scroll to newest
+  const body = document.getElementById('reqLogBody');
+  body.scrollTop = 0;
+}
+
+function addRequestLogEntry(entry) {
+  reqLogEntries.push(entry);
+  if (reqLogEntries.length > 100) reqLogEntries = reqLogEntries.slice(-100);
+  renderRequestLog();
+}
+
+// ── Render ──
+function renderAccounts() {
+  const el = document.getElementById('tableBody');
+  const countEl = document.getElementById('accountCount');
+  countEl.textContent = accounts.length + ' connection' + (accounts.length !== 1 ? 's' : '');
+
+  if (accounts.length === 0) {
+    el.innerHTML = `<div class="empty-state"><div class="icon">📭</div><div>No Grok connections in 9Router. Farm new accounts to see them here.</div></div>`;
+    return;
+  }
+
+  let html = `<table><thead><tr>
+    <th>Email</th><th>Name</th><th>Status</th><th>Models</th><th>Last Error</th><th>Auth</th><th>Action</th>
+  </tr></thead><tbody>`;
+
+  const statusMap = {
+    active: {cls:'badge-success', text:'Active'},
+    exhausted: {cls:'badge-pending', text:'Exhausted'},
+    error: {cls:'badge-fail', text:'Error'},
+    unavailable: {cls:'badge-fail', text:'Unavailable'},
+    unknown: {cls:'badge-pending', text:'Unknown'},
+  };
+
+  accounts.forEach((a, i) => {
+    const email = a.email || '?';
+    const name = a.name || '?';
+    const s = statusMap[a.status] || statusMap.unknown;
+    const models = (a.model_lock || []).join(', ') || '-';
+    const lastErr = a.last_error ? (a.last_error.length > 60 ? a.last_error.substring(0,60)+'...' : a.last_error) : '-';
+    const lastErrTime = a.last_error_at ? new Date(a.last_error_at).toLocaleString('en-US', {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
+    const auth = a.auth_type || '?';
+    const id = a.id || '';
+
+    html += `<tr style="animation:fadeIn ${0.3 + i*0.05}s ease">
+      <td class="email-cell">${esc(email)}</td>
+      <td>${esc(name)}</td>
+      <td><span class="badge ${s.cls}">${s.text}${a.error_code ? ' ('+a.error_code+')' : ''}</span></td>
+      <td style="color:var(--text3);font-size:.8rem">${esc(models)}</td>
+      <td style="color:var(--text3);font-size:.8rem;max-width:300px" title="${esc(a.last_error||'')}">${esc(lastErr)} ${lastErrTime ? '<br><small>'+lastErrTime+'</small>' : ''}</td>
+      <td style="color:var(--text3);font-size:.8rem">${esc(auth)}</td>
+      <td><button class="btn btn-danger btn-sm" onclick="deleteAccount('${esc(id)}')">Deactivate</button></td>
+    </tr>`;
+  });
+
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+function updateFarmUI(data) {
+  const badge = document.getElementById('statusBadge');
+  const text = document.getElementById('statusText');
+  const btn = document.getElementById('btnFarm');
+  const btnText = document.getElementById('btnFarmText');
+  const spinner = document.getElementById('farmSpinner');
+
+  if (data.running) {
+    badge.className = 'status-badge running';
+    text.textContent = `Running ${data.completed}/${data.total} — ${data.current_email || ''}`;
+    btn.classList.add('running');
+    btn.disabled = true;
+    btnText.textContent = `Farming... ${data.progress}%`;
+    spinner.style.display = 'block';
+  } else {
+    badge.className = 'status-badge idle';
+    text.textContent = data.current_step === 'done' ? 'Complete' : 'Idle';
+    btn.classList.remove('running');
+    btn.disabled = false;
+    btnText.textContent = 'Start Farming';
+    spinner.style.display = 'none';
+  }
+}
+
+function addLog(line, scroll = true) {
+  const logBody = document.getElementById('logBody');
+  if (logBody.querySelector('.log-line.info')?.textContent === 'Waiting for activity...') {
+    logBody.innerHTML = '';
+  }
+  const div = document.createElement('div');
+  div.className = 'log-line';
+  if (line.includes('SUCCESS')) div.classList.add('success');
+  else if (line.includes('ERROR') || line.includes('FAIL')) div.classList.add('error');
+  else if (line.includes('═══')) div.classList.add('info');
+  div.textContent = line;
+  logBody.appendChild(div);
+  // Keep max 200 lines
+  while (logBody.children.length > 200) logBody.removeChild(logBody.firstChild);
+  if (scroll) logBody.scrollTop = logBody.scrollHeight;
+}
+
+// ── Actions ──
+let renewData = null;
+
+async function startFarm() {
+  const count = parseInt(document.getElementById('farmCount').value) || 1;
+  const headless = document.getElementById('headlessToggle').checked;
+  try {
+    const r = await fetch('/api/farm', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({count, proxy: true, headless})
+    });
+    if (!r.ok) {
+      const err = await r.json();
+      addLog('[ERROR] ' + (err.detail || 'Failed to start'));
+    }
+  } catch (e) {
+    addLog('[ERROR] ' + e.message);
+  }
+}
+
+async function checkAndRenew() {
+  const btn = document.getElementById('btnRenew');
+  const btnText = document.getElementById('btnRenewText');
+  const spinner = document.getElementById('renewSpinner');
+  btn.disabled = true;
+  spinner.style.display = 'block';
+  btnText.textContent = 'Checking...';
+
+  try {
+    const r = await fetch('/api/check-quota');
+    if (!r.ok) {
+      const err = await r.json();
+      alert(err.error || 'Failed to check quota');
+      return;
+    }
+    renewData = await r.json();
+    showRenewModal(renewData);
+  } catch (e) {
+    alert('Error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    spinner.style.display = 'none';
+    btnText.textContent = 'Renew';
+  }
+}
+
+function showRenewModal(data) {
+  const content = document.getElementById('renewContent');
+  const confirmBtn = document.getElementById('btnConfirmRenew');
+  let html = '';
+
+  if (data.expired === 0) {
+    html = `<p style="color:var(--green)">All ${data.total} connections are active. No renewal needed.</p>`;
+    confirmBtn.style.display = 'none';
+  } else {
+    html += `<p><strong style="color:var(--red)">${data.expired}</strong> of ${data.total} accounts have exhausted free usage (429). <strong style="color:var(--green)">${data.active}</strong> still active.</p>`;
+    html += `<p style="margin-bottom:12px">Expired accounts will be deleted from <strong>9Router</strong> + <strong>x.ai</strong>, then new accounts will be farmed.</p>`;
+    html += `<div class="quota-list">`;
+    data.connections.forEach(c => {
+      const status = c.quota?.status || 'unknown';
+      const dotClass = status === 'active' ? 'active' : 'expired';
+      const usageStr = c.quota?.usage != null ? `${(c.quota.usage/1000).toFixed(0)}K/${(c.quota.limit/1000).toFixed(0)}K` : status;
+      const emailStr = c.email ? `<br><span style="font-size:.7rem;color:var(--text3)">${esc(c.email)}</span>` : '';
+      html += `<div class="quota-item">
+        <div style="display:flex;align-items:center">
+          <span class="status-dot ${dotClass}"></span>
+          <span>${esc(c.name || c.id.slice(0,12))}${emailStr}</span>
+        </div>
+        <span class="quota-badge ${status === 'active' ? 'quota-ok' : 'quota-dead'}">${usageStr}</span>
+      </div>`;
+    });
+    html += `</div>`;
+    html += `<div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+      <span class="count-label">Renew count:</span>
+      <input type="number" id="renewCount" class="count-input" value="${data.expired}" min="1" max="${data.total}">
+      <span style="font-size:.75rem;color:var(--text3)">(auto: ${data.expired} expired)</span>
+    </div>`;
+    confirmBtn.style.display = 'inline-flex';
+  }
+
+  content.innerHTML = html;
+  document.getElementById('renewModal').classList.add('show');
+}
+
+function closeRenewModal() {
+  document.getElementById('renewModal').classList.remove('show');
+  renewData = null;
+}
+
+async function confirmRenew() {
+  const count = parseInt(document.getElementById('renewCount')?.value) || 0;
+  const btn = document.getElementById('btnConfirmRenew');
+  const spinner = document.getElementById('confirmRenewSpinner');
+  btn.disabled = true;
+  spinner.style.display = 'block';
+
+  try {
+    const r = await fetch('/api/renew', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({count, proxy: true})
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      alert(d.error || 'Renew failed');
+      return;
+    }
+    closeRenewModal();
+    addLog(`[RENEW] Deleted ${d.deleted?.length || 0} expired: ${d.deleted?.join(', ')}`);
+    addLog(`[RENEW] Farming ${d.farming_count} replacement(s)...`);
+  } catch (e) {
+    alert('Error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    spinner.style.display = 'none';
+  }
+}
+
+async function deleteAccount(id) {
+  if (!id || !confirm('Deactivate this connection?')) return;
+  try {
+    await fetch('/api/accounts/' + id, {method: 'DELETE'});
+    fetchAccounts();
+    fetchStats();
+  } catch {}
+}
+
+function refreshAll() {
+  fetchStats();
+  fetchAccounts();
+  fetchLogs();
+  fetchQuota();
+  fetchRequestLog();
+}
+
+// ── Utils ──
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// ── Init ──
+connectWS();
+fetchStats();
+fetchAccounts();
+fetchLogs();
+fetchQuota();
+fetchRequestLog();
+// Auto-refresh every 10s
+setInterval(() => { fetchStats(); fetchAccounts(); fetchQuota(); }, 10000);
+setInterval(() => { fetchRequestLog(); }, 5000);
+
+// ── Settings ──
+let settingsData = null;
+let proxyPool = [];
+
+function openSettings() {
+  fetch('/api/settings').then(r => r.json()).then(cfg => {
+    settingsData = cfg;
+    // IP Rotation — unified mode
+    const adb = cfg.proxy?.adb || {};
+    proxyPool = cfg.proxy?.pool || [];
+    let mode = 'off';
+    if (adb.enabled) mode = 'adb';
+    else if (proxyPool.length > 0 || cfg.proxy?.mode === 'socks5') mode = 'socks5';
+    document.getElementById('proxyMode').value = mode;
+    renderProxyList();
+    onRotationModeChange();
+    // ADB
+    document.getElementById('adbPath').value = adb.adb_path || '';
+    document.getElementById('adbSerial').value = adb.device_serial || '';
+    // Email
+    const em = cfg.email || {};
+    document.getElementById('emailHost').value = em.imap_host || '';
+    document.getElementById('emailPort').value = em.imap_port || 993;
+    document.getElementById('emailAddr').value = em.email || '';
+    document.getElementById('emailDomain').value = em.domain || '';
+    // 9Router
+    const nr = cfg.ninrouter || {};
+    document.getElementById('routerUrl').value = nr.base_url || '';
+    document.getElementById('routerDbPath').value = nr.db_path || '';
+    // Show modal
+    document.getElementById('settingsModal').classList.add('show');
+  }).catch(e => {
+    addLog('[ERROR] Failed to load settings: ' + e);
+  });
+}
+
+function closeSettings() {
+  document.getElementById('settingsModal').classList.remove('show');
+  document.getElementById('adbTestResult').textContent = '';
+  document.getElementById('adbTestResult').className = 'proxy-test';
+}
+
+function switchSettingsTab(tab) {
+  document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.settings-section').forEach(s => s.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById('tab-' + tab).classList.add('active');
+}
+
+function renderProxyList() {
+  const ul = document.getElementById('proxyList');
+  if (proxyPool.length === 0) {
+    ul.innerHTML = '<li style="color:var(--text3);font-size:.8rem;padding:8px">No proxies configured</li>';
+    return;
+  }
+  ul.innerHTML = proxyPool.map((url, i) => {
+    const masked = url.replace(/:[^@]+@/, ':***@');
+    return `<li class="proxy-item"><span class="ip">${esc(masked)}</span><span class="remove" onclick="removeProxy(${i})">x</span></li>`;
+  }).join('');
+}
+
+function addProxy() {
+  const input = document.getElementById('proxyNewInput');
+  const val = input.value.trim();
+  if (!val) return;
+  const ok = ['socks5://','socks4://','http://','https://'].some(s => val.startsWith(s));
+  if (!ok) { alert('Format tidak didukung. Gunakan: socks5://, socks4://, http://, atau https://'); return; }
+  proxyPool.push(val);
+  input.value = '';
+  renderProxyList();
+}
+
+function removeProxy(i) {
+  proxyPool.splice(i, 1);
+  renderProxyList();
+}
+
+function onRotationModeChange() {
+  const mode = document.getElementById('proxyMode').value;
+  document.getElementById('proxyPoolSection').style.display = mode === 'socks5' ? 'block' : 'none';
+  document.getElementById('adbSection').style.display = mode === 'adb' ? 'block' : 'none';
+  document.getElementById('offModeWarning').style.display = mode === 'off' ? 'block' : 'none';
+}
+
+function testProxy() {
+  const el = document.getElementById('proxyTestResult');
+  if (!proxyPool.length) { el.className = 'proxy-test err'; el.textContent = 'No proxies in pool'; return; }
+  el.className = 'proxy-test testing'; el.textContent = 'Testing proxy...';
+  fetch('/api/proxy/test', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({proxy: proxyPool[0]})
+  }).then(r => r.json()).then(d => {
+    if (d.ok) { el.className = 'proxy-test ok'; el.textContent = 'Proxy OK: ' + (d.ip || 'connected'); }
+    else { el.className = 'proxy-test err'; el.textContent = 'Proxy error: ' + d.error; }
+  }).catch(e => { el.className = 'proxy-test err'; el.textContent = 'Request failed: ' + e; });
+}
+
+function testAdb() {
+  const el = document.getElementById('adbTestResult');
+  el.className = 'proxy-test testing';
+  el.textContent = 'Testing ADB connection...';
+  const adbPath = document.getElementById('adbPath').value;
+  const serial = document.getElementById('adbSerial').value;
+  fetch('/api/proxy/test', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({type: 'adb', adb_path: adbPath, serial: serial})
+  }).then(r => r.json()).then(d => {
+    if (d.ok) { el.className = 'proxy-test ok'; el.textContent = 'ADB connected: ' + (d.device || 'OK'); }
+    else { el.className = 'proxy-test err'; el.textContent = 'ADB error: ' + d.error; }
+  }).catch(e => { el.className = 'proxy-test err'; el.textContent = 'Request failed: ' + e; });
+}
+
+function saveSettings() {
+  const mode = document.getElementById('proxyMode').value;
+  const payload = {
+    proxy: {
+      pool: mode === 'socks5' ? proxyPool : (settingsData?.proxy?.pool || []),
+      mode: mode === 'off' ? 'off' : 'socks5',
+      adb: {
+        enabled: mode === 'adb',
+        adb_path: document.getElementById('adbPath').value,
+        device_serial: document.getElementById('adbSerial').value,
+      }
+    },
+    email: {
+      imap_host: document.getElementById('emailHost').value,
+      imap_port: parseInt(document.getElementById('emailPort').value) || 993,
+      email: document.getElementById('emailAddr').value,
+      domain: document.getElementById('emailDomain').value,
+      password: '***', // don't overwrite
+    },
+    ninrouter: {
+      base_url: document.getElementById('routerUrl').value,
+      password: '***', // don't overwrite
+      db_path: document.getElementById('routerDbPath').value,
+    }
+  };
+  fetch('/api/settings', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  }).then(r => r.json()).then(d => {
+    if (d.ok) { closeSettings(); addLog('[SETTINGS] Settings saved'); }
+    else { alert('Error: ' + (d.error || 'unknown')); }
+  }).catch(e => { alert('Failed: ' + e); });
+}
+</script>
+</body>
+</html>

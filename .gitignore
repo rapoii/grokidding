@@ -1,0 +1,6 @@
+config.json
+data/
+__pycache__/
+*.pyc
+*.egg-info/
+PLAN.md
