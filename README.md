@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/banner.png" alt="Grokidding Banner" width="100%">
+
 # 🤖 Grokidding
 
 ### Automated Grok/xAI Account Farmer → 9Router
