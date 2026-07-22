@@ -800,7 +800,7 @@ Grokidding dibangun berkat riset dan kode sumber dari komunitas berikut:
 ```
 MIT License
 
-Copyright (c) 2026 Nous Research
+Copyright (c) 2026 Rafi Permana
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -827,6 +827,6 @@ SOFTWARE.
 
 ### ⭐ Kalau proyek ini bermanfaat, kasih bintang ya!
 
-**Dibuat dengan ❤️ oleh Nous Research**
+**Dibuat dengan ❤️ oleh [Rafi Permana](https://github.com/rapoii)**
 
 </div>
