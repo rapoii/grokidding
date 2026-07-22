@@ -792,8 +792,9 @@ function openSettings() {
     const adb = cfg.proxy?.adb || {};
     proxyPool = cfg.proxy?.pool || [];
     let mode = 'off';
+    const proxyMode = cfg.proxy?.mode || 'off';
     if (adb.enabled) mode = 'adb';
-    else if (proxyPool.length > 0 || cfg.proxy?.mode === 'socks5') mode = 'socks5';
+    else if (proxyMode === 'socks5' || (proxyMode !== 'off' && proxyPool.length > 0)) mode = 'socks5';
     document.getElementById('proxyMode').value = mode;
     renderProxyList();
     onRotationModeChange();
