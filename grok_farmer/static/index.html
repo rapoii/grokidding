@@ -927,7 +927,12 @@ function saveSettings() {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(payload)
   }).then(r => r.json()).then(d => {
-    if (d.ok) { closeSettings(); addLog('[SETTINGS] Settings saved'); }
+    if (d.ok) {
+      closeSettings();
+      addLog('[SETTINGS] Settings saved');
+      // Update local cache so startFarm() reads correct proxy mode
+      settingsData = Object.assign({}, settingsData, payload);
+    }
     else { alert('Error: ' + (d.error || 'unknown')); }
   }).catch(e => { alert('Failed: ' + e); });
 }
