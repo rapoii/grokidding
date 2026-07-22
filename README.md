@@ -34,9 +34,10 @@
 | ✅ IMAP OTP Reader | Baca kode OTP otomatis dari email catch-all (Migadu) |
 | ✅ OAuth → 9Router | Device code flow + API exchange (SQLite fallback) |
 | ✅ Multi-Protocol Proxy | SOCKS5, SOCKS4, HTTP, HTTPS + ADB airplane mode |
-| ✅ Web Control Panel | Dark theme dashboard, real-time WebSocket, quota tracking |
+| ✅ Web Control Panel | Dark theme dashboard, real-time WebSocket, live logs |
+| ✅ Quota Tracking | Pantau penggunaan 500 queries/account/24h |
 | ✅ Account Renewal | Hapus expired + buat pengganti otomatis (satu klik) |
-| ✅ Headless Mode | Jalan di background tanpa jendela browser |
+| ✅ Stop Farming | Hentikan proses farming kapan saja dari dashboard |
 | ✅ Grok Proxy Endpoint | Panel bisa jadi proxy `/v1/responses` untuk Grok CLI |
 
 ---
@@ -149,10 +150,11 @@ Edit `config.json`:
 | `ninrouter.db_path` | Path absolut ke SQLite 9Router (untuk fallback push) |
 | `email.imap_host` | Server IMAP (Migadu: `imap.migadu.com`) |
 | `email.domain` | Domain untuk generate email random |
+| `proxy.mode` | Mode rotasi IP: `socks5` atau `off` |
 | `proxy.pool` | Daftar URL proxy (rotasi tiap akun) |
 | `proxy.adb.enabled` | `true` untuk rotasi IP via airplane mode |
-| `turnstile.max_retries` | Jumlah percobaan solve Turnstile |
-| `signup.password_length` | Panjang password auto-generated |
+
+> 💡 Semua setting bisa diedit langsung dari Web UI (tab **⚙️ Settings**). Tidak perlu edit file manual.
 
 ---
 
@@ -174,40 +176,42 @@ Terminal akan menampilkan menu interaktif. Tekan **Enter** pada opsi **"Open Web
 
 Di dashboard Web UI:
 1. Isi **jumlah akun** yang ingin dibuat
-2. Aktifkan **proxy** jika tersedia
+2. Atur **proxy mode** di tab ⚙️ Settings (socks5 / off)
 3. Klik **"Start Farming"**
-4. Progress berjalan **real-time** via WebSocket
+4. Progress berjalan **real-time** via WebSocket + Live Logs
+5. Klik **"Stop"** kapan saja untuk menghentikan proses
 
 <p align="center">
   <img src="docs/screenshot-full.png" alt="Grokidding Full Dashboard" width="90%">
 </p>
 
-### 3. Pantau Akun
+### 3. Pantau Akun & Quota
 
-- **📊 Quota** → cek sisa 500 queries per akun
+- **📊 Quota** → cek sisa 500 queries per akun (auto-refresh setelah farming selesai)
 - **📋 Accounts** → lihat status semua akun (active/exhausted/error)
 
 ### 4. Renew Akun Expired
 
-1. Tab **Quota** → klik **"Check Quota"**
-2. Tab **Renew** → klik **"Renew"**
-3. Grokidding otomatis: hapus expired dari xAI + 9Router → buat baru → push
+1. Tab **🔄 Renew** → klik **"Renew"**
+2. Grokidding otomatis: hapus expired dari xAI + 9Router → buat baru → push
 
 ### 5. Edit Config dari Panel
 
-Tab **⚙️ Settings** → edit konfigurasi langsung dari browser (proxy, email, 9Router, dll).
+Tab **⚙️ Settings** → edit konfigurasi langsung dari browser:
+- **IP Rotation** — pilih mode: Off / Proxy SOCKS5 / ADB Airplane Mode
+- **Email** — IMAP host, port, email address, domain
+- **9Router** — base URL, password, database path
 
 ### 6. Semua Tab
 
 | Tab | Fungsi |
 |-----|--------|
-| 📊 Dashboard | Statistik akun, grafik quota |
-| 🚀 Farming | Mulai farming + live progress |
-| 📋 Accounts | Daftar akun, hapus individual |
-| 📊 Quota | Cek sisa 500 queries/account/24h |
+| 📊 Dashboard | Statistik akun, grafik quota, Start/Stop farming |
+| 📋 Accounts | Daftar akun, status, hapus individual |
+| 📊 Quota | Cek sisa 500 queries/account/24h (cached 30s) |
 | 🔄 Renew | Hapus expired + buat pengganti |
-| 📝 Logs | Log real-time streaming |
-| ⚙️ Settings | Edit config, test proxy/ADB |
+| 📝 Logs | Live Logs real-time via WebSocket |
+| ⚙️ Settings | Edit config, test proxy/ADB, simpan |
 
 ---
 
@@ -221,7 +225,7 @@ Tab **⚙️ Settings** → edit konfigurasi langsung dari browser (proxy, email
 | HTTP | `http://user:pass@host:port` |
 | HTTPS | `https://user:pass@host:port` |
 
-Edit `config.json` → tambah ke `proxy.pool`. Minimal 3-5 proxy untuk hasil terbaik.
+Edit `config.json` → tambah ke `proxy.pool`, atau tambah via tab **⚙️ Settings** di Web UI. Minimal 3-5 proxy untuk hasil terbaik.
 
 **ADB IP Rotation (gratis, tanpa proxy):**
 1. Aktifkan USB Debugging di HP Android
@@ -236,10 +240,11 @@ Edit `config.json` → tambah ke `proxy.pool`. Minimal 3-5 proxy untuk hasil ter
 |---------|--------|
 | Config not found | `cp config.example.json config.json` lalu edit |
 | OTP timeout | Cek catch-all domain aktif, cek folder spam |
-| Button not found | Update Chrome + DrissionPage, coba `--no-proxy` |
+| Button not found | Update Chrome + DrissionPage, coba mode proxy Off |
 | Push failed | Cek 9Router running, cek `db_path` benar |
 | Turnstile gagal | Pastikan `turnstile_patch/` ada, naikkan `max_retries` |
-| IP diblokir | Tambah proxy, gunakan ADB rotation, kurangi batch |
+| IP diblokir | Aktifkan proxy atau ADB rotation, kurangi batch |
+| Proxy error | Cek koneksi proxy via tab Settings → Test Proxy |
 
 ---
 
@@ -248,13 +253,13 @@ Edit `config.json` → tambah ke `proxy.pool`. Minimal 3-5 proxy untuk hasil ter
 ```
 grokidding/
 ├── grok_farmer/           # Python package
-│   ├── __main__.py        # CLI entry point
-│   ├── panel.py           # FastAPI web panel (~1100 baris)
-│   ├── static/index.html  # Dashboard frontend
+│   ├── __main__.py        # CLI entry point + interactive launcher
+│   ├── panel.py           # FastAPI web panel + quota cache + WebSocket
+│   ├── static/index.html  # Dashboard frontend (dark theme)
 │   ├── turnstile.py       # Turnstile solver + browser launcher
 │   ├── signup.py          # xAI registration (gRPC-Web)
 │   ├── oauth.py           # Device code OAuth flow
-│   ├── router_push.py     # 9Router push (API + SQLite)
+│   ├── router_push.py     # 9Router push (API + SQLite fallback)
 │   ├── email_reader.py    # IMAP OTP reader
 │   ├── proxy.py           # Multi-protocol proxy rotation
 │   ├── grpc_web.py        # gRPC-Web protobuf codec
@@ -262,6 +267,7 @@ grokidding/
 │   └── utils.py           # Helpers (generate, save, log)
 ├── turnstile_patch/       # Chrome extension (Turnstile bypass)
 ├── config.json            # ⚠️ Gitignored — credentials kamu
+├── config.example.json    # Contoh config (placeholder)
 ├── requirements.txt       # Dependencies
 └── README.md
 ```
