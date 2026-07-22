@@ -362,11 +362,11 @@ tbody td{padding:12px 20px;font-size:.85rem}
           <div id="adbSection" style="display:none;margin-top:16px">
             <div class="field">
               <label>ADB Path</label>
-              <input type="text" id="adbPath" placeholder="D:/Software/Sdk/platform-tools/adb.exe">
+              <input type="text" id="adbPath" placeholder="C:/path/to/adb.exe atau adb (jika di PATH)">
             </div>
             <div class="field">
               <label>Device Serial</label>
-              <input type="text" id="adbSerial" placeholder="ac79aaf3">
+              <input type="text" id="adbSerial" placeholder="Serial dari adb devices">
             </div>
             <button class="btn btn-ghost btn-sm" onclick="testAdb()">Test ADB Connection</button>
             <div class="proxy-test" id="adbTestResult"></div>
@@ -377,7 +377,7 @@ tbody td{padding:12px 20px;font-size:.85rem}
         <div class="settings-section" id="tab-email">
           <div class="field">
             <label>IMAP Host</label>
-            <input type="text" id="emailHost" placeholder="imap.migadu.com">
+            <input type="text" id="emailHost" placeholder="imap.servermu.com">
           </div>
           <div class="field-row">
             <div class="field">
