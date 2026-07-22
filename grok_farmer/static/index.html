@@ -930,6 +930,8 @@ function saveSettings() {
     else { alert('Error: ' + (d.error || 'unknown')); }
   }).catch(e => { alert('Failed: ' + e); });
 }
+// Load settings on init so proxy mode is known
+fetch('/api/settings').then(r => r.json()).then(cfg => { settingsData = cfg; }).catch(() => {});
 </script>
 </body>
 </html>
