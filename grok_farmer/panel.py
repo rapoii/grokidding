@@ -83,6 +83,20 @@ class FarmState:
         """Broadcast current farm state to all WebSocket clients."""
         self._try_broadcast_progress()
 
+    def broadcast_quota(self):
+        """Fetch fresh quota and broadcast to all WebSocket clients."""
+        try:
+            data = _fetch_quota_sync()
+            now = time.time()
+            with _quota_lock:
+                _quota_cache["data"] = data
+                _quota_cache["ts"] = now
+            if self._loop and self._ws_clients:
+                msg = json.dumps({"type": "quota", "data": data})
+                asyncio.run_coroutine_threadsafe(self._broadcast(msg), self._loop)
+        except Exception:
+            pass
+
     def _try_broadcast_log(self, entry: str):
         if self._loop and self._ws_clients:
             try:
@@ -128,6 +142,72 @@ class FarmState:
 
 
 state = FarmState()
+
+# Quota cache
+_quota_cache = {"data": None, "ts": 0.0}
+_quota_lock = threading.Lock()
+QUOTA_CACHE_TTL = 30  # seconds
+
+
+def _fetch_quota_sync() -> dict:
+    """Blocking quota check — run in thread to avoid blocking event loop."""
+    connections = _get_all_grok_connections()
+    total_limit = 0
+    total_remaining = 0
+    total_used = 0
+    accounts = []
+
+    for conn in connections:
+        if not conn["token"]:
+            accounts.append({"name": conn["name"], "email": conn["email"], "status": "no_token", "limit": 0, "remaining": 0, "used": 0})
+            continue
+
+        try:
+            body = json.dumps({"model": "grok-4.5", "input": "ping", "max_output_tokens": 1}).encode()
+            req = urllib.request.Request(
+                "https://cli-chat-proxy.grok.com/v1/responses",
+                data=body, method="POST",
+            )
+            req.add_header("Authorization", f"Bearer {conn['token']}")
+            for k, v in GROK_CLI_HEADERS.items():
+                req.add_header(k, v)
+            req.add_header("Content-Type", "application/json")
+            resp = urllib.request.urlopen(req, timeout=10)
+            limit = int(resp.headers.get("x-ratelimit-limit-tokens", "1000000"))
+            remaining = int(resp.headers.get("x-ratelimit-remaining-tokens", "0"))
+            used = limit - remaining
+            total_limit += limit
+            total_remaining += remaining
+            total_used += used
+            accounts.append({"name": conn["name"], "email": conn["email"], "status": "active", "limit": limit, "remaining": remaining, "used": used})
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                err_body = e.read().decode("utf-8", "replace")
+                usage, limit = 0, 1000000
+                m = re.search(r"queries \(actual/limit\):\s*(\d+)/(\d+)", err_body)
+                if m:
+                    usage, limit = int(m.group(1)), int(m.group(2))
+                else:
+                    m = re.search(r"tokens \(actual/limit\):\s*(\d+)/(\d+)", err_body)
+                    if m:
+                        usage, limit = int(m.group(1)), int(m.group(2))
+                remaining = max(0, limit - usage)
+                total_limit += limit
+                total_remaining += remaining
+                total_used += usage
+                accounts.append({"name": conn["name"], "email": conn["email"], "status": "expired", "limit": limit, "remaining": remaining, "used": usage})
+            else:
+                accounts.append({"name": conn["name"], "email": conn["email"], "status": "error", "limit": 0, "remaining": 0, "used": 0})
+        except Exception:
+            accounts.append({"name": conn["name"], "email": conn["email"], "status": "error", "limit": 0, "remaining": 0, "used": 0})
+
+    return {
+        "total_accounts": len(connections),
+        "total_limit": total_limit,
+        "total_remaining": total_remaining,
+        "total_used": total_used,
+        "accounts": accounts,
+    }
 
 # ── App ──
 app = FastAPI(title="Grokidding Panel")
@@ -857,68 +937,25 @@ def _get_best_token() -> tuple[str, str]:
 
 
 @app.get("/api/quota")
-async def get_quota():
-    """Return aggregated quota across all grok-cli connections."""
-    connections = _get_all_grok_connections()
-    total_limit = 0
-    total_remaining = 0
-    total_used = 0
-    accounts = []
+async def get_quota(force: bool = False):
+    """Return aggregated quota — cached for 30s, non-blocking."""
+    now = time.time()
+    with _quota_lock:
+        if not force and _quota_cache["data"] and (now - _quota_cache["ts"]) < QUOTA_CACHE_TTL:
+            cached = dict(_quota_cache["data"])
+            cached["cached"] = True
+            return JSONResponse(cached)
 
-    for conn in connections:
-        if not conn["token"]:
-            accounts.append({"name": conn["name"], "email": conn["email"], "status": "no_token", "limit": 0, "remaining": 0, "used": 0})
-            continue
+    # Run blocking Grok API calls in thread pool
+    data = await asyncio.to_thread(_fetch_quota_sync)
+    data["cached"] = False
+    data["ts"] = now
 
-        try:
-            body = json.dumps({"model": "grok-4.5", "input": "ping", "max_output_tokens": 1}).encode()
-            req = urllib.request.Request(
-                "https://cli-chat-proxy.grok.com/v1/responses",
-                data=body, method="POST",
-            )
-            req.add_header("Authorization", f"Bearer {conn['token']}")
-            for k, v in GROK_CLI_HEADERS.items():
-                req.add_header(k, v)
-            req.add_header("Content-Type", "application/json")
-            resp = urllib.request.urlopen(req, timeout=10)
-            limit = int(resp.headers.get("x-ratelimit-limit-tokens", "1000000"))
-            remaining = int(resp.headers.get("x-ratelimit-remaining-tokens", "0"))
-            used = limit - remaining
-            total_limit += limit
-            total_remaining += remaining
-            total_used += used
-            accounts.append({"name": conn["name"], "email": conn["email"], "status": "active", "limit": limit, "remaining": remaining, "used": used})
-        except urllib.error.HTTPError as e:
-            if e.code == 429:
-                # Parse usage from error
-                err_body = e.read().decode("utf-8", "replace")
-                usage, limit = 0, 1000000
-                # Try "queries (actual/limit)" first (free tier)
-                m = re.search(r"queries \(actual/limit\):\s*(\d+)/(\d+)", err_body)
-                if m:
-                    usage, limit = int(m.group(1)), int(m.group(2))
-                else:
-                    # Fallback to "tokens (actual/limit)"
-                    m = re.search(r"tokens \(actual/limit\):\s*(\d+)/(\d+)", err_body)
-                    if m:
-                        usage, limit = int(m.group(1)), int(m.group(2))
-                remaining = max(0, limit - usage)
-                total_limit += limit
-                total_remaining += remaining
-                total_used += usage
-                accounts.append({"name": conn["name"], "email": conn["email"], "status": "expired", "limit": limit, "remaining": remaining, "used": usage})
-            else:
-                accounts.append({"name": conn["name"], "email": conn["email"], "status": "error", "limit": 0, "remaining": 0, "used": 0})
-        except Exception:
-            accounts.append({"name": conn["name"], "email": conn["email"], "status": "error", "limit": 0, "remaining": 0, "used": 0})
+    with _quota_lock:
+        _quota_cache["data"] = data
+        _quota_cache["ts"] = now
 
-    return JSONResponse({
-        "total_accounts": len(connections),
-        "total_limit": total_limit,
-        "total_remaining": total_remaining,
-        "total_used": total_used,
-        "accounts": accounts,
-    })
+    return JSONResponse(data)
 
 
 @app.get("/api/request-log")
@@ -1183,6 +1220,9 @@ def _run_farm(count: int, use_proxy: bool, dry_run: bool):
         state.finish()
         state.add_log("Farm run complete.")
         state.broadcast_progress()
+        # Refresh quota after farming
+        state.add_log("Checking quota...")
+        state.broadcast_quota()
 
 
 # ── Server Runner ──

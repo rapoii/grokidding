@@ -455,6 +455,7 @@ function connectWS() {
       const msg = JSON.parse(e.data);
       if (msg.type === 'progress') updateFarmUI(msg.data);
       if (msg.type === 'log') addLog(msg.line);
+      if (msg.type === 'quota') updateQuotaUI(msg.data);
 
     } catch {}
   };
@@ -502,25 +503,27 @@ async function fetchQuota() {
   try {
     const r = await fetch('/api/quota');
     if (!r.ok) return;
-    const d = await r.json();
-    const fmt = (n) => {
-      if (n >= 1000000) return (n/1000000).toFixed(1) + 'M';
-      if (n >= 1000) return (n/1000).toFixed(0) + 'K';
-      return n.toString();
-    };
-    document.getElementById('quotaTotal').textContent = fmt(d.total_limit);
-    document.getElementById('quotaTotalSub').textContent = d.total_accounts + ' accounts x ' + (d.total_accounts > 0 ? fmt(Math.round(d.total_limit / d.total_accounts)) : '?');
-    document.getElementById('quotaAccounts').textContent = d.total_accounts + ' accounts';
-    document.getElementById('quotaRemaining').textContent = fmt(d.total_remaining);
-    const pct = d.total_limit > 0 ? Math.round(d.total_remaining / d.total_limit * 100) : 0;
-    document.getElementById('quotaRemainingSub').textContent = pct + '% available';
-    document.getElementById('quotaUsed').textContent = fmt(d.total_used);
-    document.getElementById('quotaUsedSub').textContent = fmt(d.total_used) + ' queries';
-    // Progress bar
-    const bar = document.getElementById('quotaBarFill');
-    bar.style.width = pct + '%';
-    bar.style.background = pct > 50 ? 'var(--green)' : pct > 20 ? 'var(--yellow)' : 'var(--red)';
+    updateQuotaUI(await r.json());
   } catch {}
+}
+
+function updateQuotaUI(d) {
+  const fmt = (n) => {
+    if (n >= 1000000) return (n/1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n/1000).toFixed(0) + 'K';
+    return n.toString();
+  };
+  document.getElementById('quotaTotal').textContent = fmt(d.total_limit);
+  document.getElementById('quotaTotalSub').textContent = d.total_accounts + ' accounts x ' + (d.total_accounts > 0 ? fmt(Math.round(d.total_limit / d.total_accounts)) : '?');
+  document.getElementById('quotaAccounts').textContent = d.total_accounts + ' accounts';
+  document.getElementById('quotaRemaining').textContent = fmt(d.total_remaining);
+  const pct = d.total_limit > 0 ? Math.round(d.total_remaining / d.total_limit * 100) : 0;
+  document.getElementById('quotaRemainingSub').textContent = pct + '% available';
+  document.getElementById('quotaUsed').textContent = fmt(d.total_used);
+  document.getElementById('quotaUsedSub').textContent = fmt(d.total_used) + ' queries';
+  const bar = document.getElementById('quotaBarFill');
+  bar.style.width = pct + '%';
+  bar.style.background = pct > 50 ? 'var(--green)' : pct > 20 ? 'var(--yellow)' : 'var(--red)';
 }
 
 // ── Request Log ──
