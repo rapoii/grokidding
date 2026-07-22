@@ -46,6 +46,7 @@ class FarmState:
         self.finished_at: Optional[str] = None
         self.logs: list[str] = []
         self._ws_clients: set = set()
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     def reset(self, count: int):
         with self.lock:
@@ -76,13 +77,13 @@ class FarmState:
             if len(self.logs) > 500:
                 self.logs = self.logs[-500:]
         # Broadcast to WebSocket clients
-        try:
-            loop = asyncio.get_running_loop()
-            asyncio.run_coroutine_threadsafe(
-                self._broadcast(json.dumps({"type": "log", "line": entry})), loop
-            )
-        except RuntimeError:
-            pass
+        if self._loop and self._ws_clients:
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self._broadcast(json.dumps({"type": "log", "line": entry})), self._loop
+                )
+            except Exception:
+                pass
 
     async def _broadcast(self, msg: str):
         dead = set()
@@ -1037,6 +1038,8 @@ async def proxy_grok_responses(request: Request):
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
     state._ws_clients.add(ws)
+    if not state._loop:
+        state._loop = asyncio.get_running_loop()
     try:
         # Send recent logs on connect
         with state.lock:
