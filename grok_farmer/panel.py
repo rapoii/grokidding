@@ -271,7 +271,7 @@ def _load_accounts() -> list[dict]:
                 status = "exhausted"
             elif error_code:
                 status = "error"
-            elif test_status == "success":
+            elif test_status in ("success", "active"):
                 status = "active"
             elif test_status == "unavailable":
                 status = "unavailable"
