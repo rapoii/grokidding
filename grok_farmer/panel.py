@@ -143,8 +143,9 @@ class FarmState:
 
 state = FarmState()
 
-# Quota cache
+# Quota cache + per-account status map (email -> "active"/"expired"/"error")
 _quota_cache = {"data": None, "ts": 0.0}
+_quota_status_map = {}  # email -> {"status": str, "remaining": int, "limit": int, "used": int}
 _quota_lock = threading.Lock()
 QUOTA_CACHE_TTL = 30  # seconds
 
@@ -200,6 +201,25 @@ def _fetch_quota_sync() -> dict:
                 accounts.append({"name": conn["name"], "email": conn["email"], "status": "error", "limit": 0, "remaining": 0, "used": 0})
         except Exception:
             accounts.append({"name": conn["name"], "email": conn["email"], "status": "error", "limit": 0, "remaining": 0, "used": 0})
+
+    # Build per-account status map for _load_accounts()
+    global _quota_status_map
+    for a in accounts:
+        if a.get("email"):
+            _quota_status_map[a["email"]] = {
+                "status": a["status"],
+                "remaining": a.get("remaining", 0),
+                "limit": a.get("limit", 0),
+                "used": a.get("used", 0),
+            }
+        # Also map by name for connections without email
+        if a.get("name"):
+            _quota_status_map[a["name"]] = {
+                "status": a["status"],
+                "remaining": a.get("remaining", 0),
+                "limit": a.get("limit", 0),
+                "used": a.get("used", 0),
+            }
 
     return {
         "total_accounts": len(connections),
@@ -262,12 +282,18 @@ def _load_accounts() -> list[dict]:
         accounts = []
         for row in rows:
             data = json.loads(row["data"]) if row["data"] else {}
-            # Determine status
+            # Determine status — prefer real-time quota data over stale SQLite fields
             error_code = data.get("errorCode")
             test_status = data.get("testStatus", "unknown")
             is_active = bool(row["isActive"])
+            conn_email = row["email"] or data.get("email", "")
+            conn_name = row["name"] or ""
 
-            if error_code == 429:
+            # Check real-time quota status map first (updated by /api/quota)
+            quota_info = _quota_status_map.get(conn_email) or _quota_status_map.get(conn_name)
+            if quota_info:
+                status = quota_info["status"]
+            elif error_code == 429:
                 status = "exhausted"
             elif error_code:
                 status = "error"
@@ -1219,6 +1245,13 @@ def _run_farm(count: int, use_proxy: bool, dry_run: bool):
             else:
                 state.failed += 1
                 state.add_log(f"FAILED: {result.get('email', '?')} - {result.get('error', '?')}")
+                # Update quota status map in real-time
+                err = str(result.get('error', ''))
+                email = result.get('email', '')
+                if '429' in err or 'exhausted' in err.lower():
+                    _quota_status_map[email] = {"status": "expired", "remaining": 0, "limit": 500, "used": 500}
+                elif email:
+                    _quota_status_map[email] = {"status": "error", "remaining": 0, "limit": 0, "used": 0}
 
             state.current_email = result.get("email", "")
             state.broadcast_progress()
