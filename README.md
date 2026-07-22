@@ -158,79 +158,48 @@ Edit `config.json`:
 
 ## 🚀 Tutorial
 
-### Launcher (Default)
+### 1. Jalankan Grokidding
 
 ```bash
-# Buka Web UI langsung (panel auto-start + browser terbuka)
 python -m grok_farmer
 ```
 
-Navigasi pakai **arrow keys ↑↓**, Enter untuk pilih. Escape untuk keluar.
+Terminal akan menampilkan menu interaktif. Tekan **Enter** pada opsi **"Open Web UI"** — browser otomatis terbuka ke dashboard.
 
-### CLI (Command Line)
+### 2. Mulai Farming
 
-```bash
-# 1 akun
-python -m grok_farmer run
+Di dashboard Web UI:
+1. Isi **jumlah akun** yang ingin dibuat
+2. Aktifkan **proxy** jika tersedia
+3. Klik **"Start Farming"**
+4. Progress berjalan **real-time** via WebSocket
 
-# 10 akun sekaligus
-python -m grok_farmer run --count 10
+### 3. Pantau Akun
 
-# Dry run (testing config, tidak daftar sungguhan)
-python -m grok_farmer run --dry-run --count 5
+- **📊 Quota** → cek sisa 500 queries per akun
+- **📋 Accounts** → lihat status semua akun (active/exhausted/error)
 
-# Tanpa proxy
-python -m grok_farmer run --no-proxy
+### 4. Renew Akun Expired
 
-# Headless mode (background, tanpa jendela)
-python -m grok_farmer run --headless --count 5
-```
-
-**Semua opsi:**
-```
-python -m grok_farmer run [opsi]
-
-  --count N       Jumlah akun (default: 1)
-  --config PATH   File config (default: config.json)
-  --dry-run       Hanya generate kredensial
-  --no-proxy      Matikan rotasi proxy
-  --headless      Browser tanpa jendela
-```
-
-### Web Panel
-
-> 💡 Panel otomatis jalan saat kamu jalankan `python -m grok_farmer` (launcher).
-> Atau jalankan manual:
-
-```bash
-python -m grok_farmer panel --port 8083
-```
-
-Buka **http://localhost:8083** di browser.
-
-Panel punya tab:
-- **📊 Dashboard** — statistik akun, grafik quota
-- **🚀 Farming** — mulai farming + live progress (WebSocket)
-- **📋 Accounts** — daftar akun, status (active/exhausted/error)
-- **📊 Quota** — cek sisa 500 queries/account/24h
-- **🔄 Renew** — hapus expired + buat pengganti (satu klik)
-- **📝 Logs** — log real-time streaming
-- **⚙️ Settings** — edit config, test proxy, test ADB
-
-### Renew (Perpanjangan Akun)
-
-1. Buka panel → tab **Quota** → klik **"Check Quota"**
+1. Tab **Quota** → klik **"Check Quota"**
 2. Tab **Renew** → klik **"Renew"**
 3. Grokidding otomatis: hapus expired dari xAI + 9Router → buat baru → push
 
-```bash
-# Via API
-curl -X POST http://localhost:8083/api/renew \
-  -H "Content-Type: application/json" \
-  -d '{"count": 0, "proxy": true}'
-```
+### 5. Edit Config dari Panel
 
-> `count: 0` = auto (ganti semua yang expired)
+Tab **⚙️ Settings** → edit konfigurasi langsung dari browser (proxy, email, 9Router, dll).
+
+### 6. Semua Tab
+
+| Tab | Fungsi |
+|-----|--------|
+| 📊 Dashboard | Statistik akun, grafik quota |
+| 🚀 Farming | Mulai farming + live progress |
+| 📋 Accounts | Daftar akun, hapus individual |
+| 📊 Quota | Cek sisa 500 queries/account/24h |
+| 🔄 Renew | Hapus expired + buat pengganti |
+| 📝 Logs | Log real-time streaming |
+| ⚙️ Settings | Edit config, test proxy/ADB |
 
 ---
 
