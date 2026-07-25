@@ -1,78 +1,94 @@
 """Email generator and OTP polling via generator.email.
 
-Replaces IMAP-based email reading. Uses browser to open generator.email
-inbox and scrape OTP codes from incoming emails.
+Uses browser to generate fresh email addresses directly from generator.email
+(not hardcoded domains — those expire/break).
 
-Usage:
-    from .email_generator import GeneratorEmailReader
-
-    reader = GeneratorEmailReader(browser_instance)
-    otp = reader.wait_for_otp(timeout=180, target_email="xxx@domain.com")
+Flow:
+1. Open generator.email in browser tab
+2. Copy the auto-generated email address from the page
+3. Use that email for xAI signup
+4. Poll the same tab for incoming OTP emails
 """
 
-import random
 import re
-import string
-import subprocess
 import time
 from typing import Optional
 
 
-# Fallback domains if scraping fails
-DEFAULT_DOMAINS = ["ferd.live", "gudri.com", "cihuy.net"]
+def generate_email_from_browser(browser, max_attempts: int = 10) -> str:
+    """Generate a fresh email address from generator.email via browser.
 
-# Known bad domains (blocked by platforms)
-DOMAINS_BLOCKLIST = [
-    "alightmotion.id", "angiiidayyy.click", "banri.xyz",
-    "binancepools.cloud", "brenlova.com", "clousy.site",
-    "embege.xyz", "herilev.top", "hitbtcpool.cloud",
-    "kantclass.com", "mailvip.net", "mos-kwa.ru",
-    "nanopools.info", "ndut.pro", "nodem.app",
-    "p-aac.top", "rawr.foo", "suntuy.com",
-    "vectorbrasil.app", "zumnime.me",
-]
+    Opens generator.email, clicks "Generate new e-mail" until we get
+    a supported domain (not generator.email or blocked domains).
 
+    Args:
+        browser: DrissionPage ChromiumPage instance
+        max_attempts: Max times to click "Generate new e-mail"
 
-def get_available_domains() -> list[str]:
-    """Scrape available email domains from generator.email.
+    Returns:
+        full_email string
 
-    Falls back to DEFAULT_DOMAINS if scraping fails.
+    Raises:
+        RuntimeError if failed after max_attempts
     """
-    try:
-        result = subprocess.run(
-            ["curl", "-s", "https://generator.email", "--max-time", "15"],
-            capture_output=True, text=True, timeout=20
-        )
-        html = result.stdout
-        # Extract domains from quoted strings in the page
-        domains = re.findall(r'"([a-z0-9.-]+\.[a-z]{2,})"', html)
-        # Filter: only real email domains (skip CDN/analytics/w3c)
-        skip = {
-            "google-analytics.com", "googlesyndication.com",
-            "googletagmanager.com", "jsdelivr.net", "w3.org",
-            "googleapis.com", "gstatic.com",
-        }
-        domains = sorted(set(
-            d for d in domains
-            if d not in skip and d not in DOMAINS_BLOCKLIST and "." in d
-        ))
-        if domains:
-            return domains
-    except Exception:
-        pass
-    return DEFAULT_DOMAINS
+    UNSUPPORTED_DOMAINS = {"generator.email", "dharmadi.com"}
 
+    tab = browser.new_tab("https://generator.email")
+    time.sleep(5)
 
-def random_email(domains: list[str] = None) -> tuple[str, str, str]:
-    """Generate random email address for generator.email.
+    for attempt in range(max_attempts):
+        email = None
 
-    Returns: (full_email, user, domain)
-    """
-    if domains is None:
-        domains = get_available_domains()
-    user = "".join(random.choices(string.ascii_lowercase + string.digits, k=10))
-    domain = random.choice(domains)
-    return f"{user}@{domain}", user, domain
+        # Read email from input fields
+        try:
+            email_input = tab.ele("css:input[aria-label*='username'], input[placeholder*='username']", timeout=3)
+            domain_input = tab.ele("css:input[aria-label*='domain'], input[placeholder*='domain']", timeout=3)
+            if email_input and domain_input:
+                user = email_input.attr("value") or ""
+                domain = domain_input.attr("value") or ""
+                if user and domain:
+                    email = f"{user}@{domain}"
+        except Exception:
+            pass
+
+        # Fallback: extract from visible text
+        if not email:
+            try:
+                page_text = tab.ele("css:body").text if tab.ele("css:body", timeout=2) else ""
+                emails_found = re.findall(r'([a-z0-9]{6,20}@[a-z0-9.-]+\.[a-z]{2,})', page_text)
+                if emails_found:
+                    email = emails_found[0]
+            except Exception:
+                pass
+
+        if email:
+            domain = email.split("@", 1)[1]
+            if domain in UNSUPPORTED_DOMAINS:
+                print(f"  [email] Domain {domain} unsupported, regenerating... (attempt {attempt+1})")
+            else:
+                print(f"  [email] Generated: {email} (attempt {attempt+1})")
+                tab.close()
+                return email
+        else:
+            print(f"  [email] Could not read email, regenerating... (attempt {attempt+1})")
+
+        # Click "Generate new e-mail" to get a different email
+        try:
+            gen_btn = tab.ele("text:Generate new e-mail", timeout=3)
+            if gen_btn:
+                gen_btn.click()
+                time.sleep(3)
+            else:
+                # Fallback: try the button by CSS
+                gen_btn = tab.ele("css:button:has-text('Generate')", timeout=3)
+                if gen_btn:
+                    gen_btn.click()
+                    time.sleep(3)
+        except Exception:
+            pass
+
+    tab.close()
+    raise RuntimeError(f"Failed to generate supported email after {max_attempts} attempts")
 
 
 def extract_xai_code(text: str) -> Optional[str]:
@@ -81,15 +97,14 @@ def extract_xai_code(text: str) -> Optional[str]:
     xAI sends codes in format: XXX-XXX (e.g., V96-2ET)
     We strip the dash and return 6 chars.
     """
-    # Pattern: XXX-XXX (3 chars, dash, 3 chars)
-    dash_codes = re.findall(r"\b([A-Z0-9]{3}-[A-Z0-9]{3})\b", text)
+    # Pattern: XXX-XXX (3 chars, dash, 3 chars) — uppercase alphanumeric
+    dash_codes = re.findall(r'\b([A-Z0-9]{3}-[A-Z0-9]{3})\b', text)
     if dash_codes:
         return dash_codes[0].replace("-", "")
 
-    # Fallback: 6-char alphanumeric
-    alpha = re.findall(r"\b([A-Z0-9]{6})\b", text)
+    # Fallback: 6-char alphanumeric (no dash)
+    alpha = re.findall(r'\b([A-Z0-9]{6})\b', text)
     if alpha:
-        # Filter year-like codes
         year_codes = {"202020", "202120", "202220", "202320", "202420", "202520", "202620"}
         for c in alpha:
             if c not in year_codes:
@@ -101,8 +116,7 @@ def extract_xai_code(text: str) -> Optional[str]:
 class GeneratorEmailReader:
     """Read OTP codes from generator.email via browser.
 
-    Compatible interface with IMAPOtpReader.wait_for_otp().
-    Opens generator.email inbox in a new browser tab and polls for codes.
+    Opens generator.email inbox and polls for new xAI emails.
     """
 
     def __init__(self, browser):
@@ -111,26 +125,14 @@ class GeneratorEmailReader:
             browser: DrissionPage ChromiumPage instance (signup browser)
         """
         self._browser = browser
-        self._domains = None
-
-    def get_domains(self) -> list[str]:
-        """Get available domains (cached)."""
-        if self._domains is None:
-            self._domains = get_available_domains()
-        return self._domains
-
-    def generate_email(self) -> tuple[str, str, str]:
-        """Generate random email using generator.email domains.
-
-        Returns: (full_email, user, domain)
-        """
-        return random_email(self.get_domains())
+        self._email_tab = None
 
     def wait_for_otp(self, timeout: int = 180, poll_interval: float = 3.0,
                      target_email: str = "", **kwargs) -> Optional[str]:
         """Poll generator.email inbox for xAI OTP code.
 
         Opens generator.email/{email} in a new tab, polls for emails.
+        Only accepts codes from NEW emails (not pre-existing ones).
 
         Args:
             timeout: Max seconds to wait
@@ -148,95 +150,89 @@ class GeneratorEmailReader:
         print(f"  [otp] Opening inbox: {inbox_url}")
 
         # Open inbox in new tab
-        email_tab = self._browser.new_tab(inbox_url)
-        time.sleep(4)
+        self._email_tab = self._browser.new_tab(inbox_url)
+        time.sleep(5)
+
+        # Note: 'Email not supported' is a domain verification status, not a blocker
+
+        # Collect pre-existing codes to skip them
+        try:
+            pre_html = self._email_tab.html
+            pre_codes = set(re.findall(r'\b([A-Z0-9]{3}-[A-Z0-9]{3})\b', pre_html))
+            pre_codes.update(re.findall(r'\b([A-Z0-9]{6})\b', pre_html))
+            print(f"  [otp] Pre-existing codes to skip: {len(pre_codes)}")
+        except Exception:
+            pre_codes = set()
 
         start = time.time()
         check_count = 0
-        seen_codes = set()
 
         while time.time() - start < timeout:
             check_count += 1
             try:
                 # Check if tab is still alive
                 try:
-                    _ = email_tab.title
+                    _ = self._email_tab.title
                 except Exception:
                     print(f"  [otp] Tab closed, reopening...")
-                    email_tab = self._browser.new_tab(inbox_url)
+                    self._email_tab = self._browser.new_tab(inbox_url)
                     time.sleep(4)
 
-                # Get page HTML
+                # Look for email items in inbox
                 try:
-                    page_html = email_tab.html
+                    items = self._email_tab.eles("css:#email-table a.list-group-item")
+                    if not items:
+                        items = self._email_tab.eles("css:a.list-group-item")
                 except Exception:
-                    page_html = ""
+                    items = []
 
-                # Look for xAI email indicators
-                page_lower = page_html.lower()
-                has_xai = any(kw in page_lower for kw in [
-                    "xai", "spacexai", "x.ai", "confirmation code",
-                    "grok", "verify your email"
-                ])
-
-                if has_xai:
-                    print(f"  [otp] xAI email detected, extracting code...")
-
-                    # Try to click email rows to read body
+                for item in items:
                     try:
-                        items = email_tab.eles("css:#email-table a.list-group-item")
-                        if not items:
-                            items = email_tab.eles("css:a.list-group-item")
+                        item_text = item.text if hasattr(item, "text") else ""
+                    except Exception:
+                        continue
 
-                        for item in items:
-                            try:
-                                item_text = item.text if hasattr(item, "text") else ""
-                            except Exception:
-                                continue
+                    item_lower = item_text.lower()
+                    is_xai = any(kw in item_lower for kw in [
+                        "xai", "spacexai", "x.ai", "confirmation", "verify", "grok"
+                    ])
+                    if not is_xai:
+                        continue
 
-                            item_lower = item_text.lower()
-                            if any(kw in item_lower for kw in [
-                                "xai", "spacexai", "confirmation", "verify", "grok"
-                            ]):
-                                print(f"  [otp] Clicking: {item_text[:60]}")
-                                item.click()
-                                time.sleep(3)
+                    # Skip if this email's codes were already visible
+                    item_codes = set(re.findall(r'\b([A-Z0-9]{3}-[A-Z0-9]{3})\b', item_text))
+                    item_codes.update(re.findall(r'\b([A-Z0-9]{6})\b', item_text))
+                    if item_codes and item_codes.issubset(pre_codes):
+                        continue  # Pre-existing email, skip
 
-                                # Get body text
-                                try:
-                                    body_text = email_tab.html
-                                except Exception:
-                                    body_text = ""
+                    # New xAI email found!
+                    print(f"  [otp] New email: {item_text[:60]}")
+                    item.click()
+                    time.sleep(3)
 
-                                code = extract_xai_code(body_text)
-                                if code and code not in seen_codes:
-                                    print(f"  [otp] Found code: {code}")
-                                    self._safe_close_tab(email_tab)
-                                    return code
-                                elif code:
-                                    seen_codes.add(code)
+                    try:
+                        body_text = self._email_tab.html
+                    except Exception:
+                        body_text = ""
 
-                                # Go back to inbox
-                                try:
-                                    email_tab.get(inbox_url)
-                                    time.sleep(2)
-                                except Exception:
-                                    pass
-                                break
-                    except Exception as e:
-                        print(f"  [otp] Click error: {e}")
-
-                    # Fallback: try to extract from full page
-                    code = extract_xai_code(page_html)
-                    if code and code not in seen_codes:
-                        print(f"  [otp] Found code from page: {code}")
-                        self._safe_close_tab(email_tab)
+                    code = extract_xai_code(body_text)
+                    if code and code not in pre_codes:
+                        print(f"  [otp] Found code: {code}")
+                        self._safe_close()
                         return code
+
+                    # Go back to inbox
+                    try:
+                        self._email_tab.get(inbox_url)
+                        time.sleep(2)
+                    except Exception:
+                        pass
+                    break
 
                 # Periodic status
                 if check_count % 10 == 0:
                     elapsed = int(time.time() - start)
-                    print(f"  [otp] Still waiting... ({elapsed}s)")
+                    print(f"  [otp] Waiting for new xAI email... ({elapsed}s)")
 
             except Exception as e:
                 if check_count <= 3:
@@ -244,23 +240,24 @@ class GeneratorEmailReader:
 
             # Refresh inbox
             try:
-                email_tab.refresh()
+                self._email_tab.refresh()
                 time.sleep(poll_interval)
             except Exception:
                 try:
-                    email_tab.get(inbox_url)
+                    self._email_tab.get(inbox_url)
                     time.sleep(poll_interval)
                 except Exception:
                     pass
 
         # Timeout
-        self._safe_close_tab(email_tab)
+        self._safe_close()
         print(f"  [otp] TIMEOUT after {timeout}s")
         return None
 
-    def _safe_close_tab(self, tab):
-        """Close tab without raising exceptions."""
+    def _safe_close(self):
+        """Close email tab without raising."""
         try:
-            tab.close()
+            if self._email_tab:
+                self._email_tab.close()
         except Exception:
             pass

@@ -135,13 +135,13 @@ def _run_farm(count: int, use_proxy: bool):
     sys.stderr = StringIO()
     try:
         from .config import load_config
-        from .email_generator import GeneratorEmailReader, get_available_domains
+        from .email_generator import GeneratorEmailReader
         from .proxy import ProxyRotator
         from .turnstile import TurnstileSolver
         from .__main__ import run_single_account
 
         cfg = load_config()
-        domains = get_available_domains()
+        # Email generated via browser inside run_single_account
         farm.add_log(f"[green]Loaded {len(domains)} email domains[/green]")
 
         proxy_rotator = ProxyRotator([])

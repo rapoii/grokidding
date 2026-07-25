@@ -33,7 +33,7 @@ from pathlib import Path
 
 from .config import load_config
 from .email_reader import IMAPOtpReader
-from .email_generator import GeneratorEmailReader, random_email as gen_random_email, get_available_domains
+from .email_generator import GeneratorEmailReader, generate_email_from_browser
 from .oauth import OAuthClient
 from .proxy import ProxyRotator
 from .router_push import RouterPusher
@@ -200,10 +200,10 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
     scfg = cfg["signup"]
     ocfg = cfg["output"]
 
-    # Generate email based on mode
+    # For IMAP mode, generate email now. For generator mode, generate after browser launch.
     if email_mode == 'generator':
-        domains = get_available_domains()
-        email, user_part, domain_part = gen_random_email(domains)
+        email = None  # will be generated after browser launch
+        user_part, domain_part = "", ""
     else:
         email = generate_email(ecfg["domain"])
         user_part, domain_part = email.split("@", 1)
@@ -213,13 +213,19 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
     proxy = proxy_rotator.next() if proxy_rotator.pool else ""
 
     result = {
-        "email": email, "password": password,
+        "email": email or "pending", "password": password,
         "first_name": first_name, "last_name": last_name,
         "proxy": proxy, "started_at": datetime.now(timezone.utc).isoformat(),
         "steps": {}, "success": False,
     }
 
-    if dry_run:
+    # For generator mode, dry_run returns before browser launch — use placeholder
+    if dry_run and email_mode == 'generator':
+        result["steps"]["dry_run"] = {"generated": True, "mode": "generator"}
+        result["success"] = True
+        print(f"  [DRY RUN] mode=generator.email, name={first_name} {last_name}")
+        return result
+    elif dry_run:
         result["steps"]["dry_run"] = {"generated": True}
         result["success"] = True
         print(f"  [DRY RUN] email={email}, name={first_name} {last_name}")
@@ -249,6 +255,15 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
         if not solver._browser:
             solver._launch_browser()
         page = solver._browser
+
+        # Generate email from browser + create reader (generator mode)
+        if email_mode == "generator":
+            email = generate_email_from_browser(solver._browser)
+            user_part, domain_part = email.split("@", 1)
+            result["email"] = email
+            print(f"  [INIT] Generated email: {email}")
+            email_reader = GeneratorEmailReader(solver._browser)
+            print("  [INIT] GeneratorEmailReader ready")
 
         # Sign out any existing session (fresh start per account)
         try:
@@ -355,6 +370,10 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
             for ch in otp_clean:
                 otp_el.input(ch)
                 time.sleep(0.15)
+            time.sleep(1)
+            # Press Enter to trigger submit (input-otp auto-submits on 6 chars,
+            # but just in case)
+            otp_el.input("\n")
             time.sleep(2)
             # Verify OTP was typed into correct field
             val = page.run_js('return document.querySelector("input[name=code]")?.value || document.querySelector("input")?.value || ""')
@@ -605,13 +624,14 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
 def cmd_run(args):
     """Run the farming process (default subcommand)."""
     cfg = load_config(args.config)
+    email_mode = cfg.get("email", {}).get("mode", "generator")
 
     print("=" * 60)
     print("  GROKKIDDING -> 9Router")
     print("=" * 60)
     print(f"  Target: {cfg['ninrouter']['base_url']}")
-    print(f"  Email: {cfg['email']['domain']}")
-    print(f"  Count: {args.count}")
+    print(f"  Email:  {email_mode}")
+    print(f"  Count:  {args.count}")
     if args.dry_run:
         print(f"  Mode: DRY RUN")
     print("=" * 60)
@@ -622,10 +642,15 @@ def cmd_run(args):
         adb_config=cfg["proxy"].get("adb"),
     )
 
-    ecfg = cfg["email"]
-    email_reader = IMAPOtpReader(ecfg["imap_host"], ecfg["imap_port"], ecfg["email"], ecfg["password"])
-    email_reader.connect()
-    print(f"  [OK] IMAP connected")
+    # Email reader: generator.email or IMAP
+    ecfg = cfg.get("email", {})
+    if email_mode == "generator":
+        print(f"  [OK] Email mode: generator.email (browser-based)")
+        email_reader = None  # created per-account using browser
+    else:
+        email_reader = IMAPOtpReader(ecfg["imap_host"], ecfg["imap_port"], ecfg["email"], ecfg["password"])
+        email_reader.connect()
+        print(f"  [OK] IMAP connected")
 
     pusher = RouterPusher(
         cfg["ninrouter"]["base_url"], cfg["ninrouter"]["password"],
@@ -647,8 +672,17 @@ def cmd_run(args):
         print(f"  Account {i+1}/{args.count}")
         print(f"{'='*60}")
 
+        # For generator.email mode, create reader from browser
+        current_reader = email_reader
+        if email_mode == "generator" and solver._browser:
+            from .email_generator import GeneratorEmailReader
+            current_reader = GeneratorEmailReader(solver._browser)
+
         try:
-            result = run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, args.dry_run)
+            result = run_single_account(
+                cfg, solver, proxy_rotator, current_reader, pusher,
+                args.dry_run, email_mode=email_mode,
+            )
             results.append(result)
             s = "SUCCESS" if result.get("success") else f"FAIL: {result.get('error', '?')[:80]}"
             print(f"\n  RESULT: {s}")
@@ -668,7 +702,8 @@ def cmd_run(args):
     print(f"  DONE: {success}/{args.count} accounts created")
     print(f"{'='*60}")
 
-    email_reader.disconnect()
+    if email_mode != "generator" and email_reader:
+        email_reader.disconnect()
     solver.close()
     return 0 if success > 0 else 1
 
