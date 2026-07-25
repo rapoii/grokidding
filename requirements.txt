@@ -1,3 +1,5 @@
 DrissionPage>=4.1
 curl_cffi>=0.7
 lxml>=5.0
+textual>=0.80
+platformdirs>=4.0

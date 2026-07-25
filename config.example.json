@@ -5,23 +5,11 @@
     "db_path": "C:/Users/Kamu/AppData/Roaming/9router/db/data.sqlite"
   },
   "email": {
-    "imap_host": "imap.migadu.com",
-    "imap_port": 993,
-    "email": "otp@domainmu.com",
-    "password": "password-imap-kamu",
-    "domain": "domainmu.com"
+    "mode": "generator"
   },
   "proxy": {
-    "mode": "socks5",
-    "pool": [
-      "socks5://user:pass@proxy1.com:1080",
-      "socks5://user:pass@proxy2.com:1080"
-    ],
-    "adb": {
-      "enabled": false,
-      "device_serial": "DEVICE_SERIAL",
-      "adb_path": "adb"
-    }
+    "mode": "off",
+    "pool": []
   },
   "turnstile": {
     "extension_path": "turnstile_patch/",

@@ -33,6 +33,7 @@ from pathlib import Path
 
 from .config import load_config
 from .email_reader import IMAPOtpReader
+from .email_generator import GeneratorEmailReader, random_email as gen_random_email, get_available_domains
 from .oauth import OAuthClient
 from .proxy import ProxyRotator
 from .router_push import RouterPusher
@@ -194,12 +195,18 @@ def dismiss_cookies(page):
 # MAIN FLOW
 # ─────────────────────────────────────────────
 
-def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run=False):
+def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run=False, email_mode='imap'):
     ecfg = cfg["email"]
     scfg = cfg["signup"]
     ocfg = cfg["output"]
 
-    email = generate_email(ecfg["domain"])
+    # Generate email based on mode
+    if email_mode == 'generator':
+        domains = get_available_domains()
+        email, user_part, domain_part = gen_random_email(domains)
+    else:
+        email = generate_email(ecfg["domain"])
+        user_part, domain_part = email.split("@", 1)
     password = generate_password(scfg.get("password_length", 16))
     first_name = generate_name()
     last_name = generate_name()  # separate random name for last
@@ -309,12 +316,16 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
         result["steps"]["5_signup"] = {"h1": st.get("h1")}
 
         # ═══════════════════════════════════════
-        # STEP 6: Wait for OTP via IMAP
+        # STEP 6: Wait for OTP
         # ═══════════════════════════════════════
-        email_reader._conn.select("INBOX")
-        time.sleep(5)
-        print(f"  [6/10] Waiting for OTP for {email} (max 300s)...")
-        otp = email_reader.wait_for_otp(timeout=300, poll_interval=5, target_email=email)
+        if email_mode == 'generator':
+            print(f"  [6/10] Waiting for OTP via generator.email for {email} (max 180s)...")
+            otp = email_reader.wait_for_otp(timeout=180, poll_interval=3, target_email=email)
+        else:
+            email_reader._conn.select("INBOX")
+            time.sleep(5)
+            print(f"  [6/10] Waiting for OTP via IMAP for {email} (max 300s)...")
+            otp = email_reader.wait_for_otp(timeout=300, poll_interval=5, target_email=email)
         if not otp:
             result["error"] = "OTP timeout (300s)"
             page_state(page, "6-timeout")
@@ -739,34 +750,35 @@ def main():
     parser = argparse.ArgumentParser(description="Grokidding -> 9Router")
     subparsers = parser.add_subparsers(dest="command")
 
-    # ── run (default) ──
-    run_parser = subparsers.add_parser("run", help="Run farming (default)")
+    # ── run ──
+    run_parser = subparsers.add_parser("run", help="Run farming via CLI")
     run_parser.add_argument("--count", type=int, default=1, help="Number of accounts")
     run_parser.add_argument("--config", type=str, help="Config file path")
     run_parser.add_argument("--dry-run", action="store_true", help="Generate credentials only")
     run_parser.add_argument("--no-proxy", action="store_true", help="Skip proxy rotation")
 
+    # ── tui (default) ──
+    tui_parser = subparsers.add_parser("tui", help="Start TUI dashboard (default)")
 
-    # ── panel ──
-    panel_parser = subparsers.add_parser("panel", help="Start web control panel")
-    panel_parser.add_argument("--port", type=int, default=8080, help="Server port (default: 8080)")
-    panel_parser.add_argument("--host", type=str, default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
+    # ── panel (legacy) ──
+    panel_parser = subparsers.add_parser("panel", help="[Legacy] Start web control panel")
+    panel_parser.add_argument("--port", type=int, default=8083, help="Server port")
+    panel_parser.add_argument("--host", type=str, default="127.0.0.1", help="Bind host")
     panel_parser.add_argument("--config", type=str, help="Config file path")
-
-    # ── launcher (default: no subcommand) ──
-    parser.add_argument("--port", type=int, default=None, help="Panel port (default: 8083)")
-    parser.add_argument("--host", type=str, default=None, help="Bind host (default: 127.0.0.1)")
 
     args = parser.parse_args()
 
     # Route to subcommand
     if args.command == "panel":
+        print("[WARN] Web panel is legacy. Use 'tui' for the new Terminal UI.")
         return cmd_panel(args)
     elif args.command == "run":
         return cmd_run(args)
     else:
-        # Default: interactive launcher
-        return cmd_launcher(args)
+        # Default: TUI
+        from .tui import GrokiddingTUI
+        app = GrokiddingTUI()
+        app.run()
 
 
 if __name__ == "__main__":
