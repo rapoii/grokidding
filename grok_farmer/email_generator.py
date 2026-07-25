@@ -36,6 +36,16 @@ def generate_email_from_browser(browser, max_attempts: int = 10) -> str:
     tab = browser.new_tab("https://generator.email")
     time.sleep(5)
 
+    # Always click "Generate new e-mail" to get a FRESH email (not cached)
+    for _ in range(3):
+        try:
+            gen_btn = tab.ele("text:Generate new e-mail", timeout=3)
+            if gen_btn:
+                gen_btn.click()
+                time.sleep(2)
+        except Exception:
+            pass
+
     for attempt in range(max_attempts):
         email = None
 
@@ -131,127 +141,128 @@ class GeneratorEmailReader:
                      target_email: str = "", **kwargs) -> Optional[str]:
         """Poll generator.email inbox for xAI OTP code.
 
-        Opens generator.email/{email} in a new tab, polls for emails.
-        Only accepts codes from NEW emails (not pre-existing ones).
-
-        Args:
-            timeout: Max seconds to wait
-            poll_interval: Seconds between refreshes
-            target_email: Email address to check (required)
-
-        Returns:
-            OTP code string or None if timeout
+        Uses persistent tab with auto-reconnect. More verbose logging.
         """
         if not target_email:
-            print("  [otp] ERROR: No target_email provided")
+            print("  [otp] ERROR: No target_email")
             return None
 
         inbox_url = f"https://generator.email/{target_email}"
-        print(f"  [otp] Opening inbox: {inbox_url}")
+        print(f"  [otp] Polling: {inbox_url}")
 
-        # Open inbox in new tab
-        self._email_tab = self._browser.new_tab(inbox_url)
-        time.sleep(5)
-
-        # Note: 'Email not supported' is a domain verification status, not a blocker
-
-        # Collect pre-existing codes to skip them
+        # Open tab + collect pre-existing codes
+        tab = None
+        pre_codes = set()
         try:
-            pre_html = self._email_tab.html
-            pre_codes = set(re.findall(r'\b([A-Z0-9]{3}-[A-Z0-9]{3})\b', pre_html))
-            pre_codes.update(re.findall(r'\b([A-Z0-9]{6})\b', pre_html))
-            print(f"  [otp] Pre-existing codes to skip: {len(pre_codes)}")
-        except Exception:
-            pre_codes = set()
+            tab = self._browser.new_tab(inbox_url)
+            time.sleep(5)
+            pre_html = tab.html
+            pre_codes = set(re.findall(r"([A-Z0-9]{3}-[A-Z0-9]{3})", pre_html))
+            pre_codes.update(re.findall(r"([A-Z0-9]{6})", pre_html))
+            year_set = {"202020", "202120", "202220", "202320", "202420", "202520", "202620"}
+            pre_codes -= year_set
+            print(f"  [otp] Pre-existing: {len(pre_codes)} codes")
+        except Exception as e:
+            print(f"  [otp] Init error: {e}")
 
         start = time.time()
-        check_count = 0
+        cycle = 0
 
         while time.time() - start < timeout:
-            check_count += 1
+            cycle += 1
             try:
-                # Check if tab is still alive
+                # Reconnect if tab dead
                 try:
-                    _ = self._email_tab.title
+                    _ = tab.html[:100] if tab else None
                 except Exception:
-                    print(f"  [otp] Tab closed, reopening...")
-                    self._email_tab = self._browser.new_tab(inbox_url)
+                    print(f"  [otp] Reconnecting tab...")
+                    try:
+                        tab = self._browser.new_tab(inbox_url)
+                    except Exception as e2:
+                        print(f"  [otp] Reconnect failed: {e2}")
+                        time.sleep(poll_interval)
+                        continue
                     time.sleep(4)
 
-                # Look for email items in inbox
+                # Get page HTML
                 try:
-                    items = self._email_tab.eles("css:#email-table a.list-group-item")
-                    if not items:
-                        items = self._email_tab.eles("css:a.list-group-item")
-                except Exception:
-                    items = []
+                    page_html = tab.html
+                except Exception as e:
+                    print(f"  [otp] HTML read error: {str(e)[:40]}")
+                    time.sleep(poll_interval)
+                    continue
 
-                for item in items:
+                # Check for xAI content in page
+                has_xai = any(kw in page_html.lower() for kw in [
+                    "xai", "spacexai", "x.ai", "confirmation code", "verify your email"
+                ])
+
+                if has_xai:
+                    # Try clicking email items
                     try:
-                        item_text = item.text if hasattr(item, "text") else ""
+                        items = tab.eles("css:a.list-group-item")
                     except Exception:
-                        continue
+                        items = []
 
-                    item_lower = item_text.lower()
-                    is_xai = any(kw in item_lower for kw in [
-                        "xai", "spacexai", "x.ai", "confirmation", "verify", "grok"
-                    ])
-                    if not is_xai:
-                        continue
+                    for item in items:
+                        try:
+                            itxt = item.text if hasattr(item, "text") else ""
+                        except:
+                            continue
 
-                    # Skip if this email's codes were already visible
-                    item_codes = set(re.findall(r'\b([A-Z0-9]{3}-[A-Z0-9]{3})\b', item_text))
-                    item_codes.update(re.findall(r'\b([A-Z0-9]{6})\b', item_text))
-                    if item_codes and item_codes.issubset(pre_codes):
-                        continue  # Pre-existing email, skip
+                        if not any(kw in itxt.lower() for kw in [
+                            "xai", "spacexai", "x.ai", "confirmation", "verify"
+                        ]):
+                            continue
 
-                    # New xAI email found!
-                    print(f"  [otp] New email: {item_text[:60]}")
-                    item.click()
-                    time.sleep(3)
+                        # Skip pre-existing
+                        item_codes = set(re.findall(r"([A-Z0-9]{3}-[A-Z0-9]{3})", itxt))
+                        item_codes.update(re.findall(r"([A-Z0-9]{6})", itxt))
+                        item_codes -= year_set
+                        if item_codes and item_codes.issubset(pre_codes):
+                            continue
 
-                    try:
-                        body_text = self._email_tab.html
-                    except Exception:
-                        body_text = ""
+                        print(f"  [otp] New email: {itxt[:50]}")
+                        item.click()
+                        time.sleep(2)
 
-                    code = extract_xai_code(body_text)
+                        try:
+                            body = tab.html
+                        except:
+                            body = ""
+
+                        code = extract_xai_code(body)
+                        if code and code not in pre_codes:
+                            print(f"  [otp] CODE: {code}")
+                            self._safe_close_tab(tab)
+                            return code
+                        break
+
+                    # Fallback: extract from full page
+                    code = extract_xai_code(page_html)
                     if code and code not in pre_codes:
-                        print(f"  [otp] Found code: {code}")
-                        self._safe_close()
+                        print(f"  [otp] CODE (page): {code}")
+                        self._safe_close_tab(tab)
                         return code
 
-                    # Go back to inbox
-                    try:
-                        self._email_tab.get(inbox_url)
-                        time.sleep(2)
-                    except Exception:
-                        pass
-                    break
-
-                # Periodic status
-                if check_count % 10 == 0:
+                # Status log every 5 cycles
+                if cycle % 5 == 0:
                     elapsed = int(time.time() - start)
-                    print(f"  [otp] Waiting for new xAI email... ({elapsed}s)")
+                    item_count = page_html.count("list-group-item") if page_html else 0
+                    print(f"  [otp] ...{elapsed}s, {item_count} items, xai={has_xai}")
 
             except Exception as e:
-                if check_count <= 3:
-                    print(f"  [otp] Check error: {e}")
+                print(f"  [otp] Cycle {cycle} error: {str(e)[:60]}")
 
-            # Refresh inbox
+            # Refresh
             try:
-                self._email_tab.refresh()
-                time.sleep(poll_interval)
-            except Exception:
-                try:
-                    self._email_tab.get(inbox_url)
-                    time.sleep(poll_interval)
-                except Exception:
-                    pass
+                tab.get(inbox_url)
+            except:
+                pass
+            time.sleep(poll_interval)
 
-        # Timeout
-        self._safe_close()
-        print(f"  [otp] TIMEOUT after {timeout}s")
+        self._safe_close_tab(tab)
+        print(f"  [otp] TIMEOUT {timeout}s")
         return None
 
     def _safe_close(self):
@@ -259,5 +270,13 @@ class GeneratorEmailReader:
         try:
             if self._email_tab:
                 self._email_tab.close()
+        except Exception:
+            pass
+
+    def _safe_close_tab(self, tab):
+        """Close a specific tab without raising."""
+        try:
+            if tab:
+                tab.close()
         except Exception:
             pass

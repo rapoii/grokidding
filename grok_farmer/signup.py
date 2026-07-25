@@ -142,7 +142,7 @@ class SignupClient:
         h = self._grpc_headers(referer)
         h["content-type"] = "application/grpc-web-text+proto"
 
-        resp = self._session.post(url, content=body_b64, headers=h, timeout=self.timeout)
+        resp = self._session.post(url, data=body_b64, headers=h, timeout=self.timeout)
 
         result = {"status": resp.status_code, "grpc_status": None}
         try:
@@ -174,7 +174,7 @@ class SignupClient:
         h = self._grpc_headers(referer)
         h["content-type"] = "application/grpc-web-text+proto"
 
-        resp = self._session.post(url, content=body_b64, headers=h, timeout=self.timeout)
+        resp = self._session.post(url, data=body_b64, headers=h, timeout=self.timeout)
 
         result = {"status": resp.status_code, "grpc_status": None}
         try:
@@ -241,7 +241,7 @@ class SignupClient:
         parts.append(f"--{boundary}--\r\n")
         body = "".join(parts).encode("utf-8")
 
-        resp = self._session.post(SIGNUP_URL, content=body, headers=h, timeout=self.timeout)
+        resp = self._session.post(SIGNUP_URL, data=body, headers=h, timeout=self.timeout)
 
         result = {
             "status": resp.status_code,
