@@ -1,16 +1,10 @@
-"""Grokidding TUI — Terminal User Interface powered by Textual.
+"""Grokidding TUI — OpenCode-style interactive terminal interface.
 
-Full-featured dashboard replacing the web panel:
-- Dashboard with stats + start/stop farming
-- Accounts table with real-time status
-- Quota tracking with cache
-- Renew expired accounts
-- Live logs
-- Settings editor (proxy, email, 9router)
+Split layout: sidebar + main content + command input.
+No tabs, no buttons — just type commands.
 """
 
 import json
-import os
 import threading
 import time
 from datetime import datetime, timezone
@@ -18,13 +12,11 @@ from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.reactive import reactive
-from textual.screen import ModalScreen
 from textual.widgets import (
-    Button, DataTable, Footer, Header, Input, Label,
-    ProgressBar, RadioSet, Select, Static, Switch,
-    TabbedContent, TabPane, TextArea,
+    DataTable, Footer, Header, Input, Label,
+    ProgressBar, RichLog, Static,
 )
 
 # ── Config ──
@@ -49,18 +41,14 @@ def _get_router_db() -> Path:
     if db_path and Path(db_path).exists():
         return Path(db_path)
     home = Path.home()
-    candidates = [
-        home / "AppData" / "Roaming" / "9router" / "db" / "data.sqlite",
-    ]
+    candidates = [home / "AppData" / "Roaming" / "9router" / "db" / "data.sqlite"]
     for c in candidates:
         if c.exists():
             return c
     return Path()
 
 
-# ── Data Loaders ──
-
-def load_accounts_from_router() -> list[dict]:
+def load_accounts() -> list[dict]:
     router_db = _get_router_db()
     if not router_db.exists():
         return []
@@ -69,7 +57,7 @@ def load_accounts_from_router() -> list[dict]:
         db = sqlite3.connect(f"file:{router_db}?immutable=1", uri=True)
         db.row_factory = sqlite3.Row
         rows = db.execute("""
-            SELECT id, name, email, isActive, data, provider, authType,
+            SELECT id, name, email, isActive, data, provider,
                    createdAt, updatedAt
             FROM providerConnections
             WHERE provider LIKE '%grok%' AND isActive=1
@@ -86,17 +74,14 @@ def load_accounts_from_router() -> list[dict]:
                 status = "error"
             elif test_status in ("success", "active"):
                 status = "active"
-            elif test_status == "unavailable":
-                status = "unavailable"
             else:
                 status = "unknown"
             accounts.append({
                 "id": row["id"],
                 "name": row["name"] or "?",
                 "email": row["email"] or data.get("email", "?"),
-                "active": bool(row["isActive"]),
                 "status": status,
-                "created_at": (row["createdAt"] or "")[:16],
+                "created": (row["createdAt"] or "")[:16],
             })
         db.close()
         return accounts
@@ -104,8 +89,7 @@ def load_accounts_from_router() -> list[dict]:
         return []
 
 
-# ── Farm State (shared between TUI and farm thread) ──
-
+# ── Farm State ──
 class FarmState:
     def __init__(self):
         self.running = False
@@ -115,7 +99,6 @@ class FarmState:
         self.successful = 0
         self.failed = 0
         self.current_email = ""
-        self.current_step = ""
         self.logs: list[str] = []
 
     def reset(self, total: int):
@@ -126,12 +109,11 @@ class FarmState:
         self.successful = 0
         self.failed = 0
         self.current_email = ""
-        self.current_step = ""
         self.logs = []
 
     def add_log(self, line: str):
         ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-        entry = f"[{ts}] {line}"
+        entry = f"[dim]{ts}[/] {line}"
         self.logs.append(entry)
         if len(self.logs) > 500:
             self.logs = self.logs[-300:]
@@ -141,444 +123,389 @@ class FarmState:
         self.stop_requested = False
 
 
-farm_state = FarmState()
+farm = FarmState()
 
 
 # ── Farm Thread ──
-
 def _run_farm(count: int, use_proxy: bool):
-    """Background thread that runs the farming loop."""
     import sys
     from io import StringIO
-
     old_stdout, old_stderr = sys.stdout, sys.stderr
-    buf = StringIO()
-    sys.stdout = buf
-    sys.stderr = buf
-
+    sys.stdout = StringIO()
+    sys.stderr = StringIO()
     try:
         from .config import load_config
         from .email_generator import GeneratorEmailReader, get_available_domains
         from .proxy import ProxyRotator
-        from .router_push import RouterPusher
         from .turnstile import TurnstileSolver
         from .__main__ import run_single_account
 
         cfg = load_config()
-        ocfg = cfg.get("output", {})
-
-        # Get available email domains
         domains = get_available_domains()
-        farm_state.add_log(f"Loaded {len(domains)} email domains from generator.email")
+        farm.add_log(f"[green]Loaded {len(domains)} email domains[/green]")
 
-        # Proxy
-        proxy_rotator = ProxyRotator([])  # empty pool if no proxy
+        proxy_rotator = ProxyRotator([])
         if use_proxy:
             pool = cfg.get("proxy", {}).get("pool", [])
             if pool:
                 proxy_rotator = ProxyRotator(pool)
-                farm_state.add_log(f"Proxy: {len(pool)} proxies in pool")
-            else:
-                farm_state.add_log("WARNING: Proxy mode on but pool empty!")
+                farm.add_log(f"[cyan]Proxy: {len(pool)} proxies[/cyan]")
 
-        # Create solver (shared across accounts)
         solver = TurnstileSolver(cfg)
 
         for i in range(count):
-            if farm_state.stop_requested:
-                farm_state.add_log("Stop requested — stopping.")
+            if farm.stop_requested:
+                farm.add_log("[yellow]Stopped by user[/yellow]")
                 break
-
-            farm_state.current_step = f"farming {i + 1}/{count}"
-            farm_state.add_log(f"--- Account {i + 1}/{count} ---")
-
-            proxy_url = proxy_rotator.next() if proxy_rotator.pool else ""
-
+            farm.add_log(f"[bold]--- Account {i+1}/{count} ---[/bold]")
             try:
-                # Create email reader using browser from solver
-                # (solver._browser is set after first account)
                 email_reader = GeneratorEmailReader(solver._browser) if solver._browser else None
-
                 result = run_single_account(
-                    cfg=cfg,
-                    solver=solver,
-                    proxy_rotator=proxy_rotator,
-                    email_reader=email_reader,
-                    pusher=None,  # pusher created inside run_single_account
-                    dry_run=False,
-                    email_mode='generator',
+                    cfg=cfg, solver=solver, proxy_rotator=proxy_rotator,
+                    email_reader=email_reader, pusher=None,
+                    dry_run=False, email_mode='generator',
                 )
             except Exception as e:
                 result = {"success": False, "error": str(e), "email": "?"}
 
-            farm_state.completed += 1
-
+            farm.completed += 1
             if result.get("success"):
-                farm_state.successful += 1
-                farm_state.add_log(f"SUCCESS: {result.get('email', '?')}")
+                farm.successful += 1
+                farm.add_log(f"[green]SUCCESS:[/] {result.get('email', '?')}")
             else:
-                farm_state.failed += 1
-                farm_state.add_log(f"FAILED: {result.get('email', '?')} - {result.get('error', '?')}")
+                farm.failed += 1
+                farm.add_log(f"[red]FAILED:[/] {result.get('email', '?')} — {result.get('error', '?')[:80]}")
 
-            farm_state.current_email = result.get("email", "")
-
-        farm_state.add_log(f"Farm complete. {farm_state.successful}/{farm_state.total} successful.")
-        farm_state.finish()
-
+        farm.add_log(f"[bold]Done: {farm.successful}/{farm.total} successful[/bold]")
+        farm.finish()
     except Exception as e:
-        farm_state.add_log(f"FATAL ERROR: {e}")
-        farm_state.finish()
+        farm.add_log(f"[red]FATAL: {e}[/red]")
+        farm.finish()
     finally:
         sys.stdout = old_stdout
         sys.stderr = old_stderr
 
 
-# ── TUI Widgets ──
-
-class StatsBar(Static):
-    """Dashboard stats bar."""
+# ── Sidebar Widget ──
+class Sidebar(Static):
     total = reactive(0)
     active = reactive(0)
     exhausted = reactive(0)
     errored = reactive(0)
 
     def render(self) -> str:
+        running = "[green]● RUNNING[/]" if farm.running else "[dim]● IDLE[/]"
         return (
-            f"[bold]Accounts:[/] {self.total}  "
-            f"[green]Active:[/] {self.active}  "
-            f"[yellow]Exhausted:[/] {self.exhausted}  "
-            f"[red]Error:[/] {self.errored}"
+            f"[bold]GROKKIDDING[/]\n"
+            f"{running}\n\n"
+            f"[bold]Accounts[/]\n"
+            f"  Total:      {self.total}\n"
+            f"  [green]Active:[/]    {self.active}\n"
+            f"  [yellow]Exhausted:[/] {self.exhausted}\n"
+            f"  [red]Error:[/]     {self.errored}\n\n"
+            f"[bold]Commands[/]\n"
+            f"  farm <n>    Start farming\n"
+            f"  stop        Stop farming\n"
+            f"  accounts    Show accounts\n"
+            f"  delete <id> Delete account\n"
+            f"  renew [n]   Renew expired\n"
+            f"  proxy       Toggle proxy\n"
+            f"  settings    Edit config\n"
+            f"  refresh     Refresh data\n"
+            f"  help        Show help\n"
+            f"  quit        Exit\n"
         )
 
 
-class LogViewer(Static):
-    """Live log viewer."""
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self._last_count = 0
-
-    def render(self) -> str:
-        logs = farm_state.logs[-50:]
-        if not logs:
-            return "[dim]No logs yet. Start farming to see output.[/]"
-        return "\n".join(logs)
-
-
-# ── Main TUI App ──
-
+# ── Main TUI ──
 class GrokiddingTUI(App):
-    """Grokidding Terminal User Interface."""
-
     TITLE = "Grokidding"
-    SUB_TITLE = "Grok/xAI Account Farmer"
+    SUB_TITLE = "Grok/xAI Farmer → 9Router"
 
     CSS = """
     Screen {
-        layout: grid;
-        grid-size: 1 3;
-        grid-rows: 1fr 5fr 1fr;
+        layout: horizontal;
     }
 
-    #stats-bar {
-        height: 3;
-        dock: top;
+    #sidebar {
+        width: 30;
+        min-width: 25;
+        height: 100%;
         background: $surface;
-        padding: 0 2;
-    }
-
-    #main-content {
-        height: 100%;
-    }
-
-    .tab-content {
-        height: 100%;
         padding: 1 2;
+        border-right: tall $primary;
     }
 
-    #footer-bar {
+    #main {
+        width: 1fr;
+        height: 100%;
+    }
+
+    #log-area {
+        height: 1fr;
+        padding: 1 2;
+        overflow-y: auto;
+        background: $surface;
+    }
+
+    #input-area {
         height: 3;
         dock: bottom;
-        background: $surface;
-        padding: 0 2;
+        padding: 0 1;
+        background: $surface-darken-1;
     }
 
-    LogViewer {
-        height: 100%;
-        border: solid $primary;
-        padding: 1;
-        overflow-y: auto;
-    }
-
-    DataTable {
-        height: 100%;
-    }
-
-    .btn-row {
+    #cmd-input {
         height: 3;
-        margin: 1 0;
-    }
-
-    .settings-group {
-        margin: 1 0;
-        padding: 1 2;
-        border: solid $primary;
-    }
-
-    .settings-group Label {
-        margin: 0 0 0 1;
-    }
-
-    Input {
-        margin: 0 1;
     }
     """
 
     BINDINGS = [
-        Binding("q", "quit", "Quit"),
-        Binding("f", "start_farm", "Farm"),
-        Binding("s", "stop_farm", "Stop"),
-        Binding("r", "refresh", "Refresh"),
+        Binding("ctrl+c", "quit", "Quit", show=True),
+        Binding("ctrl+q", "quit", "Quit", show=False),
     ]
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self):
+        super().__init__()
         self.cfg = _load_config()
-        self._refresh_timer = None
 
     def compose(self) -> ComposeResult:
-        yield Header()
-
-        with TabbedContent(initial="dashboard"):
-            # Dashboard
-            with TabPane("Dashboard", id="dashboard"):
-                with Vertical(classes="tab-content"):
-                    yield StatsBar(id="stats-bar")
-                    yield Label("Farm Settings", classes="section-title")
-                    with Horizontal(classes="btn-row"):
-                        yield Label("Count:")
-                        yield Input(value="1", id="farm-count", type="integer")
-                        yield Button("Start Farming", id="btn-farm", variant="success")
-                        yield Button("Stop", id="btn-stop", variant="error")
-                    yield Label("Live Logs", classes="section-title")
-                    yield LogViewer(id="log-viewer")
-
-            # Accounts
-            with TabPane("Accounts", id="accounts"):
-                with Vertical(classes="tab-content"):
-                    with Horizontal(classes="btn-row"):
-                        yield Button("Refresh", id="btn-refresh-accounts")
-                        yield Button("Delete Selected", id="btn-delete-account", variant="error")
-                    yield DataTable(id="accounts-table")
-
-            # Renew
-            with TabPane("Renew", id="renew"):
-                with Vertical(classes="tab-content"):
-                    yield Label("Renew expired accounts by deleting them and farming replacements.")
-                    with Horizontal(classes="btn-row"):
-                        yield Label("Count (0=auto):")
-                        yield Input(value="0", id="renew-count", type="integer")
-                        yield Button("Renew", id="btn-renew", variant="warning")
-                    yield LogViewer(id="renew-log")
-
-            # Logs
-            with TabPane("Logs", id="logs"):
-                with Vertical(classes="tab-content"):
-                    yield LogViewer(id="full-log")
-
-            # Settings
-            with TabPane("Settings", id="settings"):
-                with Vertical(classes="tab-content"):
-                    with Vertical(classes="settings-group"):
-                        yield Label("[bold]Email Generator[/]")
-                        yield Label("Mode: generator.email (no IMAP)")
-                        yield Label("[dim]OTP codes scraped from generator.email via browser[/]")
-
-                    with Vertical(classes="settings-group"):
-                        yield Label("[bold]Proxy[/]")
-                        with Horizontal():
-                            yield Label("Mode:")
-                            yield Select(
-                                [("Off", "off"), ("SOCKS5", "socks5"), ("ADB", "adb")],
-                                value=self.cfg.get("proxy", {}).get("mode", "off"),
-                                id="proxy-mode",
-                            )
-                        with Horizontal():
-                            yield Label("Pool (one per line):")
-                        yield TextArea(
-                            "\n".join(self.cfg.get("proxy", {}).get("pool", [])),
-                            id="proxy-pool",
-                        )
-
-                    with Vertical(classes="settings-group"):
-                        yield Label("[bold]9Router[/]")
-                        with Horizontal():
-                            yield Label("Base URL:")
-                            yield Input(
-                                value=self.cfg.get("ninrouter", {}).get("base_url", "http://localhost:3000"),
-                                id="router-url",
-                            )
-                        with Horizontal():
-                            yield Label("DB Path:")
-                            yield Input(
-                                value=self.cfg.get("ninrouter", {}).get("db_path", ""),
-                                id="router-db-path",
-                                placeholder="Auto-detect",
-                            )
-
-                    with Horizontal(classes="btn-row"):
-                        yield Button("Save Settings", id="btn-save-settings", variant="success")
-                        yield Button("Test Proxy", id="btn-test-proxy")
-
-        yield Footer()
+        with Horizontal():
+            with Vertical(id="sidebar"):
+                yield Sidebar(id="stats")
+            with Vertical(id="main"):
+                yield RichLog(id="log-area", markup=True, wrap=True, auto_scroll=True)
+                with Container(id="input-area"):
+                    yield Input(placeholder="Type a command... (help for list)", id="cmd-input")
 
     def on_mount(self) -> None:
         self._refresh_stats()
-        self._refresh_accounts_table()
-        # Auto-refresh every 10s
-        self._refresh_timer = self.set_interval(10, self._refresh_stats)
+        self._log("Welcome to [bold]Grokidding[/]! Type [cyan]help[/] for commands.")
+        self._log(f"Config: proxy={self.cfg.get('proxy',{}).get('mode','off')}, email=generator.email")
+        self._log("")
+        self.query_one("#cmd-input", Input).focus()
+        # Auto-refresh stats every 10s
+        self.set_interval(10, self._refresh_stats)
+        # Auto-refresh logs every 1s
+        self.set_interval(1, self._update_logs)
+
+    def _log(self, text: str):
+        log = self.query_one("#log-area", RichLog)
+        log.write(text)
+
+    def _update_logs(self):
+        """Push new farm logs to the RichLog."""
+        if not farm.logs:
+            return
+        log = self.query_one("#log-area", RichLog)
+        # Only write logs we haven't written yet
+        current_count = getattr(self, "_last_log_count", 0)
+        if len(farm.logs) > current_count:
+            for entry in farm.logs[current_count:]:
+                log.write(entry)
+            self._last_log_count = len(farm.logs)
 
     def _refresh_stats(self):
-        accounts = load_accounts_from_router()
-        stats = self.query_one("#stats-bar", StatsBar)
+        accounts = load_accounts()
+        stats = self.query_one("#stats", Sidebar)
         stats.total = len(accounts)
         stats.active = sum(1 for a in accounts if a["status"] == "active")
         stats.exhausted = sum(1 for a in accounts if a["status"] == "exhausted")
-        stats.errored = sum(1 for a in accounts if a["status"] in ("error", "unavailable", "unknown"))
+        stats.errored = sum(1 for a in accounts if a["status"] in ("error", "unknown"))
 
-    def _refresh_accounts_table(self):
-        table = self.query_one("#accounts-table", DataTable)
-        table.clear(columns=True)
-        table.add_columns("Name", "Email", "Status", "Created")
-        accounts = load_accounts_from_router()
-        for a in accounts:
-            status_style = {
-                "active": "green",
-                "exhausted": "yellow",
-                "error": "red",
-                "unavailable": "red",
-            }.get(a["status"], "dim")
-            table.add_row(
-                a["name"],
-                a["email"],
-                f"[{status_style}]{a['status']}[/]",
-                a["created_at"],
-                key=a["id"],
-            )
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        cmd = event.value.strip()
+        input_widget = self.query_one("#cmd-input", Input)
+        input_widget.value = ""
 
-
-    def action_start_farm(self):
-        if farm_state.running:
-            self.notify("Farming already in progress!", severity="warning")
+        if not cmd:
             return
-        count_input = self.query_one("#farm-count", Input)
-        count = int(count_input.value or "1")
-        farm_state.reset(count)
-        farm_state.add_log(f"Starting farm: {count} account(s)")
 
+        parts = cmd.split()
+        action = parts[0].lower()
+        args = parts[1:]
+
+        handler = getattr(self, f"_cmd_{action}", None)
+        if handler:
+            handler(args)
+        else:
+            self._log(f"[red]Unknown command:[/] {action}. Type [cyan]help[/] for list.")
+
+    def _cmd_help(self, args):
+        self._log("[bold]Commands:[/]")
+        self._log("  [cyan]farm <n>[/]         — Start farming n accounts (default: 1)")
+        self._log("  [cyan]stop[/]             — Stop current farming")
+        self._log("  [cyan]accounts[/]         — List all accounts")
+        self._log("  [cyan]delete <id/name>[/] — Delete account by ID or name")
+        self._log("  [cyan]renew [n][/]         — Renew expired accounts (0=auto)")
+        self._log("  [cyan]proxy[/]            — Show/toggle proxy mode")
+        self._log("  [cyan]proxy socks5[/]     — Set proxy mode to socks5")
+        self._log("  [cyan]proxy off[/]        — Disable proxy")
+        self._log("  [cyan]proxy test[/]       — Test proxy connections")
+        self._log("  [cyan]settings[/]         — Show current settings")
+        self._log("  [cyan]refresh[/]          — Refresh account data")
+        self._log("  [cyan]clear[/]            — Clear log area")
+        self._log("  [cyan]quit[/]             — Exit Grokidding")
+        self._log("")
+
+    def _cmd_farm(self, args):
+        if farm.running:
+            self._log("[yellow]Farming already in progress! Use 'stop' first.[/yellow]")
+            return
+        count = int(args[0]) if args else 1
+        if count < 1 or count > 100:
+            self._log("[red]Count must be 1-100[/red]")
+            return
+
+        farm.reset(count)
         proxy_mode = self.cfg.get("proxy", {}).get("mode", "off")
         use_proxy = proxy_mode == "socks5"
 
+        self._log(f"[green]Starting farm: {count} account(s), proxy={proxy_mode}[/green]")
         thread = threading.Thread(target=_run_farm, args=(count, use_proxy), daemon=True)
         thread.start()
+        self._last_log_count = 0  # reset log counter
 
-        self.notify(f"Farming {count} accounts started!", severity="information")
-
-    def action_stop_farm(self):
-        if farm_state.running:
-            farm_state.stop_requested = True
-            farm_state.add_log("Stop requested...")
-            self.notify("Stop requested", severity="warning")
+    def _cmd_stop(self, args):
+        if farm.running:
+            farm.stop_requested = True
+            self._log("[yellow]Stop requested...[/yellow]")
         else:
-            self.notify("No farming in progress", severity="information")
+            self._log("[dim]No farming in progress.[/]")
 
-    def action_refresh(self):
-        self._refresh_stats()
-        self._refresh_accounts_table()
-        self.notify("Refreshed!", severity="information")
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        btn_id = event.button.id
-
-        if btn_id == "btn-farm":
-            self.action_start_farm()
-        elif btn_id == "btn-stop":
-            self.action_stop_farm()
-        elif btn_id == "btn-refresh-accounts":
-            self._refresh_accounts_table()
-
-        elif btn_id == "btn-renew":
-            self._do_renew()
-        elif btn_id == "btn-save-settings":
-            self._save_settings()
-        elif btn_id == "btn-delete-account":
-            self.notify("Select a row first (feature coming soon)", severity="warning")
-
-    def _do_renew(self):
-        count_input = self.query_one("#renew-count", Input)
-        count = int(count_input.value or "0")
-
-        accounts = load_accounts_from_router()
-        expired = [a for a in accounts if a["status"] in ("expired", "exhausted")]
-
-        if not expired:
-            self.notify("No expired accounts found", severity="warning")
+    def _cmd_accounts(self, args):
+        accounts = load_accounts()
+        if not accounts:
+            self._log("[dim]No accounts found.[/]")
             return
+        self._log(f"[bold]Accounts ({len(accounts)}):[/]")
+        for a in accounts:
+            color = {"active": "green", "exhausted": "yellow", "error": "red"}.get(a["status"], "dim")
+            self._log(f"  [{color}]{a['status']:10}[/] {a['name']:25} {a['email']}")
 
-        actual_count = count if count > 0 else len(expired)
-        farm_state.add_log(f"[RENEW] Found {len(expired)} expired, renewing {actual_count}")
+    def _cmd_delete(self, args):
+        if not args:
+            self._log("[red]Usage: delete <name-or-id>[/red]")
+            return
+        target = " ".join(args)
+        accounts = load_accounts()
+        match = [a for a in accounts if target in a["name"] or target in a["id"][:8]]
+        if not match:
+            self._log(f"[red]No account matching '{target}'[/red]")
+            return
+        db_path = _get_router_db()
+        if not db_path.exists():
+            self._log("[red]9Router DB not found[/red]")
+            return
+        import sqlite3
+        db = sqlite3.connect(str(db_path))
+        for a in match:
+            db.execute("DELETE FROM providerConnections WHERE id = ?", (a["id"],))
+            self._log(f"[red]Deleted:[/] {a['name']} ({a['email']})")
+        db.commit()
+        db.close()
+        self._refresh_stats()
+
+    def _cmd_renew(self, args):
+        accounts = load_accounts()
+        expired = [a for a in accounts if a["status"] in ("expired", "exhausted")]
+        if not expired:
+            self._log("[yellow]No expired accounts found.[/yellow]")
+            return
+        count = int(args[0]) if args else len(expired)
+        actual = min(count, len(expired))
+        self._log(f"[yellow]Renewing {actual} expired accounts...[/yellow]")
 
         # Delete expired
         db_path = _get_router_db()
         if db_path.exists():
             import sqlite3
             db = sqlite3.connect(str(db_path))
-            for conn in expired[:actual_count]:
-                db.execute("DELETE FROM providerConnections WHERE id = ?", (conn["id"],))
-                farm_state.add_log(f"[RENEW] Deleted: {conn['name']}")
+            for a in expired[:actual]:
+                db.execute("DELETE FROM providerConnections WHERE id = ?", (a["id"],))
+                self._log(f"  Deleted: {a['name']}")
             db.commit()
             db.close()
 
-        # Farm replacements
-        farm_state.reset(actual_count)
-        proxy_mode = self.cfg.get("proxy", {}).get("mode", "off")
-        use_proxy = proxy_mode == "socks5"
+        # Start farming replacements
+        self._cmd_farm([str(actual)])
 
-        thread = threading.Thread(target=_run_farm, args=(actual_count, use_proxy), daemon=True)
-        thread.start()
+    def _cmd_proxy(self, args):
+        if not args:
+            mode = self.cfg.get("proxy", {}).get("mode", "off")
+            pool = self.cfg.get("proxy", {}).get("pool", [])
+            self._log(f"[bold]Proxy:[/] mode={mode}, pool={len(pool)} proxies")
+            return
+        action = args[0].lower()
+        if action in ("off", "socks5", "adb"):
+            self.cfg.setdefault("proxy", {})["mode"] = action
+            _save_config(self.cfg)
+            self._log(f"[green]Proxy mode set to: {action}[/green]")
+        elif action == "test":
+            self._log("[dim]Testing proxies...[/]")
+            pool = self.cfg.get("proxy", {}).get("pool", [])
+            if not pool:
+                self._log("[yellow]No proxies in pool.[/yellow]")
+                return
+            thread = threading.Thread(target=self._test_proxies, args=(pool,), daemon=True)
+            thread.start()
+        else:
+            self._log(f"[red]Unknown proxy action: {action}[/red]")
 
-        self.notify(f"Renewing {actual_count} accounts...", severity="information")
-
-    def _save_settings(self):
-        cfg = _load_config()
-
-        # Proxy
-        proxy_mode = self.query_one("#proxy-mode", Select).value
-        cfg.setdefault("proxy", {})["mode"] = proxy_mode
-
-        pool_text = self.query_one("#proxy-pool", TextArea).text
-        pool = [line.strip() for line in pool_text.strip().split("\n") if line.strip()]
-        cfg["proxy"]["pool"] = pool
-
-        # 9Router
-        cfg.setdefault("ninrouter", {})["base_url"] = self.query_one("#router-url", Input).value
-        db_path = self.query_one("#router-db-path", Input).value
-        if db_path:
-            cfg["ninrouter"]["db_path"] = db_path
-
-        _save_config(cfg)
-        self.cfg = cfg
-        self.notify("Settings saved!", severity="information")
-
-    # Log updater
-    def on_timer(self) -> None:
-        # Update log viewers
-        log_text = "\n".join(farm_state.logs[-50:]) or "[dim]No logs yet.[/]"
-        for viewer_id in ("#log-viewer", "#full-log", "#renew-log"):
+    def _test_proxies(self, pool):
+        import socks, socket, re
+        for p in pool:
+            port = p.split(":")[-1]
             try:
-                viewer = self.query_one(viewer_id, LogViewer)
-                viewer.update(log_text)
-            except Exception:
-                pass
+                m = re.match(r"socks5://([^:]+):([^@]+)@([^:]+):(\d+)", p)
+                if not m:
+                    self._log(f"  Port {port}: cannot parse")
+                    continue
+                user, pwd, host, port_num = m.groups()
+                s = socks.socksocket()
+                s.set_proxy(socks.SOCKS5, host, int(port_num), username=user, password=pwd)
+                s.settimeout(10)
+                s.connect(("httpbin.org", 80))
+                s.sendall(b"GET /ip HTTP/1.1\r\nHost: httpbin.org\r\nConnection: close\r\n\r\n")
+                resp = b""
+                while True:
+                    chunk = s.recv(4096)
+                    if not chunk:
+                        break
+                    resp += chunk
+                s.close()
+                ip = "unknown"
+                body = resp.decode()
+                if '"origin"' in body:
+                    ip = body.split('"origin": "')[1].split('"')[0]
+                self._log(f"  Port {port}: [green]OK[/] -> {ip}")
+            except Exception as e:
+                self._log(f"  Port {port}: [red]FAIL[/] — {str(e)[:50]}")
+            time.sleep(0.3)
+
+    def _cmd_settings(self, args):
+        cfg = _load_config()
+        self._log("[bold]Current Settings:[/]")
+        self._log(f"  9Router URL:  {cfg.get('ninrouter',{}).get('base_url','?')}")
+        self._log(f"  Proxy mode:   {cfg.get('proxy',{}).get('mode','off')}")
+        self._log(f"  Proxy pool:   {len(cfg.get('proxy',{}).get('pool',[]))} proxies")
+        self._log(f"  Email mode:   {cfg.get('email',{}).get('mode','generator')}")
+        self._log(f"  Turnstile:    max_retries={cfg.get('turnstile',{}).get('max_retries',15)}")
+        self._log(f"  Password len: {cfg.get('signup',{}).get('password_length',16)}")
+        self._log("")
+
+    def _cmd_refresh(self, args):
+        self._refresh_stats()
+        self._log("[green]Refreshed.[/green]")
+
+    def _cmd_clear(self, args):
+        log = self.query_one("#log-area", RichLog)
+        log.clear()
+
+    def _cmd_quit(self, args):
+        if farm.running:
+            farm.stop_requested = True
+        self.exit()
 
 
 if __name__ == "__main__":
