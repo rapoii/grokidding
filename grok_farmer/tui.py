@@ -370,14 +370,6 @@ class GrokiddingTUI(App):
                         yield Button("Delete Selected", id="btn-delete-account", variant="error")
                     yield DataTable(id="accounts-table")
 
-            # Quota
-            with TabPane("Quota", id="quota"):
-                with Vertical(classes="tab-content"):
-                    with Horizontal(classes="btn-row"):
-                        yield Button("Check Quota", id="btn-check-quota", variant="primary")
-                    yield DataTable(id="quota-table")
-                    yield Label("", id="quota-summary")
-
             # Renew
             with TabPane("Renew", id="renew"):
                 with Vertical(classes="tab-content"):
@@ -473,105 +465,6 @@ class GrokiddingTUI(App):
                 key=a["id"],
             )
 
-    def _refresh_quota(self):
-        """Check quota for all accounts (blocking — runs in thread)."""
-        import urllib.request
-
-        accounts = load_accounts_from_router()
-        if not accounts:
-            return
-
-        table = self.query_one("#quota-table", DataTable)
-        table.clear(columns=True)
-        table.add_columns("Name", "Email", "Status", "Limit", "Remaining", "Used")
-
-        cfg = _load_config()
-        db_path = _get_router_db()
-        if not db_path.exists():
-            return
-
-        import sqlite3
-        db = sqlite3.connect(f"file:{db_path}?immutable=1", uri=True)
-        db.row_factory = sqlite3.Row
-        rows = db.execute("""
-            SELECT name, data FROM providerConnections
-            WHERE provider LIKE '%grok%' AND isActive=1
-            ORDER BY createdAt DESC
-        """).fetchall()
-        db.close()
-
-        total_limit = 0
-        total_remaining = 0
-        total_used = 0
-
-        for row in rows:
-            data = json.loads(row["data"]) if row["data"] else {}
-            token = data.get("accessToken", "")
-            if not token:
-                continue
-
-            try:
-                req = urllib.request.Request(
-                    "https://cli-chat-proxy.grok.com/v1/responses",
-                    data=json.dumps({
-                        "model": "grok-4.5",
-                        "input": [{"role": "user", "content": "hi"}],
-                        "max_output_tokens": 1,
-                        "stream": False,
-                    }).encode(),
-                    headers={
-                        "Authorization": f"Bearer {token}",
-                        "Content-Type": "application/json",
-                        "User-Agent": "grok-shell/0.2.99 (linux; x86_64)",
-                        "x-grok-client-identifier": "grok-shell",
-                        "x-grok-client-version": "0.2.99",
-                    },
-                    method="POST",
-                )
-                resp = urllib.request.urlopen(req, timeout=20)
-                resp.read()
-                status = "active"
-                limit, remaining, used = 500, 500, 0
-            except urllib.error.HTTPError as e:
-                body = e.read().decode("utf-8", errors="replace")
-                if e.code == 429:
-                    status = "expired"
-                    # Parse usage
-                    limit, remaining, used = 500, 0, 500
-                    if "queries (actual/limit):" in body:
-                        try:
-                            part = body.split("queries (actual/limit):")[1].split(".")[0].strip()
-                            actual, lim = part.split("/")
-                            used, limit = int(actual.strip()), int(lim.strip())
-                            remaining = max(0, limit - used)
-                        except Exception:
-                            pass
-                else:
-                    status = f"error({e.code})"
-                    limit, remaining, used = 0, 0, 0
-            except Exception:
-                status = "timeout"
-                limit, remaining, used = 0, 0, 0
-
-            total_limit += limit
-            total_remaining += remaining
-            total_used += used
-
-            table.add_row(
-                row["name"],
-                data.get("email", "?"),
-                status,
-                str(limit),
-                str(remaining),
-                str(used),
-            )
-
-        summary = self.query_one("#quota-summary", Label)
-        summary.update(
-            f"[bold]Total: {total_limit} limit | {total_remaining} remaining | {total_used} used[/]"
-        )
-
-    # ── Event Handlers ──
 
     def action_start_farm(self):
         if farm_state.running:
@@ -612,10 +505,7 @@ class GrokiddingTUI(App):
             self.action_stop_farm()
         elif btn_id == "btn-refresh-accounts":
             self._refresh_accounts_table()
-        elif btn_id == "btn-check-quota":
-            thread = threading.Thread(target=self._refresh_quota, daemon=True)
-            thread.start()
-            self.notify("Checking quota...", severity="information")
+
         elif btn_id == "btn-renew":
             self._do_renew()
         elif btn_id == "btn-save-settings":
