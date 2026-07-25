@@ -197,6 +197,8 @@ class Sidebar(Static):
         running = "[green]● RUNNING[/]" if farm.running else "[dim]● IDLE[/]"
         return (
             f"[bold]GROKKIDDING[/]\n"
+            f"[dim]by rapoi[/dim]\n"
+            f"[link=https://github.com/rapoii]github.com/rapoii[/link]\n"
             f"{running}\n\n"
             f"[bold]Accounts[/]\n"
             f"  Total:      {self.total}\n"
@@ -220,7 +222,7 @@ class Sidebar(Static):
 # ── Main TUI ──
 class GrokiddingTUI(App):
     TITLE = "Grokidding"
-    SUB_TITLE = "Grok/xAI Farmer → 9Router"
+    SUB_TITLE = "by rapoi — Grok/xAI Farmer → 9Router"
 
     CSS = """
     Screen {
@@ -280,7 +282,8 @@ class GrokiddingTUI(App):
 
     def on_mount(self) -> None:
         self._refresh_stats()
-        self._log("Welcome to [bold]Grokidding[/]! Type [cyan]help[/] for commands.")
+        self._log("[bold]Grokidding[/] [dim]by rapoi[/dim] — [link=https://github.com/rapoii]github.com/rapoii[/link]")
+        self._log("Type [cyan]help[/] for commands.")
         self._log(f"Config: proxy={self.cfg.get('proxy',{}).get('mode','off')}, email=generator.email")
         self._log("")
         self.query_one("#cmd-input", Input).focus()
