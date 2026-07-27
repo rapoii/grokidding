@@ -538,6 +538,12 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
         poll_thread.start()
         print(f" [10] Token poll started (direct xAI)")
 
+        # Warm up accounts.x.ai session cookies (after signup we're on grok.com,
+        # but consent page on accounts.x.ai needs its own session cookies for
+        # the approval POST to auth.x.ai to include principal_id)
+        page.get("https://accounts.x.ai/account")
+        time.sleep(2)
+
         # Navigate to CONSENT page directly (not /device which needs a click-through)
         consent_url = f"https://accounts.x.ai/oauth2/device/consent?user_code={user_code}"
         page.get(consent_url)
