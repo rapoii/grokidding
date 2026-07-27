@@ -626,14 +626,12 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
                 continue
 
             # Fallback: POST directly to auth.x.ai with browser cookies via curl_cffi
-            # (form submission may fail if auth.x.ai session cookies missing)
-            time.sleep(2)
-            url = page.url
-            if "done" not in url and "authorized" not in url and "success" not in url:
-                print(f"    [10-allow-{allow_attempt}] Form didn't redirect, trying direct POST...")
-                try:
-                    cookies = page.cookies()
-                    cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in cookies if 'x.ai' in c.get('domain', ''))
+            # Form submission redirects to /device/done even when approval is rejected.
+            # Always try direct POST as backup.
+            try:
+                cookies = page.cookies()
+                cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in cookies if 'x.ai' in c.get('domain', ''))
+                if cookie_str:
                     from curl_cffi import requests as curl_requests
                     s = curl_requests.Session(impersonate="chrome131")
                     approve_resp = s.post(
@@ -651,11 +649,9 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
                         allow_redirects=False,
                         timeout=10,
                     )
-                    print(f"    [10-fallback] approve: {approve_resp.status_code}")
-                    if approve_resp.status_code in (200, 303):
-                        print(f"    [10-fallback] Direct POST succeeded!")
-                except Exception as e:
-                    print(f"    [10-fallback] error: {e}")
+                    print(f"    [10-direct-{allow_attempt}] approve: {approve_resp.status_code}")
+            except Exception as e:
+                print(f"    [10-direct-{allow_attempt}] error: {e}")
 
             time.sleep(3)
             url = page.url
