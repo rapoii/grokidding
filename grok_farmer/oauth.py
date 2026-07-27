@@ -93,11 +93,17 @@ class OAuthClient:
         import requests
         s = requests.Session()
         s.verify = False
-        s.post(
-            f"{self.router_url}/api/auth/login",
-            json={"password": self.router_password},
-            timeout=self.timeout,
-        )
+        try:
+            resp = s.post(
+                f"{self.router_url}/api/auth/login",
+                json={"password": self.router_password},
+                timeout=self.timeout,
+            )
+            if self.debug:
+                print(f"  [oauth] 9Router login: {resp.status_code}")
+        except Exception as e:
+            if self.debug:
+                print(f"  [oauth] 9Router login failed: {e}")
         return s
 
     def build_auth_url(self) -> str:

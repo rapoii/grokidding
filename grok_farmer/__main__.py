@@ -358,11 +358,38 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
             h1_now = page.ele("tag:h1", timeout=1)
             print(f"    [7] WARN: not on verify page, h1={h1_now.text if h1_now else '?'}")
         print(f"  [7/10] Typing OTP {otp_clean}...")
-        otp_el = page.ele("tag:input@name=code", timeout=3)
+        # Find OTP input — try specific selectors first, avoid email/password fields
+        otp_el = None
+        for otp_sel in [
+            "tag:input@name=code",
+            "@data-input-otp=true",
+            "tag:input@maxlength=1",
+            "tag:input@inputmode=numeric",
+            "css:input[data-input-otp]",
+            "css:input[autocomplete='one-time-code']",
+        ]:
+            try:
+                el = page.ele(otp_sel, timeout=2)
+                if el:
+                    # Verify it's NOT an email/password field
+                    ftype = el.attr("type") or ""
+                    fname = el.attr("name") or ""
+                    if ftype not in ("email", "password") and "email" not in fname.lower():
+                        otp_el = el
+                        print(f"    [7] Found OTP input: {otp_sel}")
+                        break
+            except Exception:
+                pass
         if not otp_el:
-            otp_el = page.ele("@data-input-otp=true", timeout=2)
-        if not otp_el:
-            otp_el = page.ele("tag:input", timeout=3)
+            # Last resort: find any text input that's NOT email/password
+            all_inputs = page.eles("tag:input", timeout=2)
+            for inp in (all_inputs or []):
+                ftype = inp.attr("type") or ""
+                fname = inp.attr("name") or ""
+                if ftype not in ("email", "password", "hidden") and "email" not in fname.lower():
+                    otp_el = inp
+                    print(f"    [7] Fallback OTP input: type={ftype}, name={fname}")
+                    break
         if otp_el:
             otp_el.click()
             time.sleep(0.3)
@@ -376,7 +403,17 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
             otp_el.input("\n")
             time.sleep(2)
             # Verify OTP was typed into correct field
-            val = page.run_js('return document.querySelector("input[name=code]")?.value || document.querySelector("input")?.value || ""')
+            val = page.run_js(
+                'const inputs = document.querySelectorAll("input");'
+                'for (const inp of inputs) {'
+                '  const t = inp.type || "";'
+                '  const n = inp.name || "";'
+                '  if (t !== "email" && t !== "password" && t !== "hidden" && !n.includes("email") && inp.value) {'
+                '    return inp.value;'
+                '  }'
+                '}'
+                'return "";'
+            )
             print(f"    [7] input value: {val}")
             result["steps"]["7_otp_fill"] = {"value": val, "match": val == otp_clean}
         else:
@@ -459,21 +496,43 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
         print(f"  [9/10] Clicking 'Complete sign up'...")
         redirected = False
         for ts_attempt in range(3):
-            # Proactively solve Turnstile BEFORE clicking
-            try:
-                ts_el = page.ele("@name=cf-turnstile-response", timeout=2)
-                if ts_el:
-                    print(f"    [9] Turnstile detected (attempt {ts_attempt+1}), solving...")
-                    solver.solve_turnstile()
-                    time.sleep(2)
-            except Exception:
-                pass
+            # Wait for Turnstile auto-solve (extension patches MouseEvent)
+            # The turnstile_patch extension handles this automatically
+            for _ts_wait in range(30):
+                ts_val = page.run_js(
+                    "try { return document.querySelector('input[name=cf-turnstile-response]')?.value || '' }"
+                    " catch(e) { return '' }"
+                )
+                if ts_val and len(ts_val) > 10:
+                    print(f"    [9] Turnstile auto-solved!")
+                    break
+                time.sleep(1)
+            else:
+                # Manual solve fallback
+                try:
+                    ts_el = page.ele("@name=cf-turnstile-response", timeout=2)
+                    if ts_el:
+                        print(f"    [9] Turnstile not auto-solved, trying manual...")
+                        solver.solve_turnstile()
+                        time.sleep(2)
+                except Exception:
+                    pass
 
             clicked = click_button_js(page, "Complete sign up", label=f"9-{ts_attempt}")
             if not clicked:
                 submit_form_js(page, "input[type=password]", label=f"9-fb-{ts_attempt}")
             time.sleep(8)
             st = page_state(page, f"9-{ts_attempt}")
+
+            # Check for common errors on the page
+            try:
+                page_text = page.run_js("return document.body?.innerText || ''")
+                for err in ['too weak', 'already registered', 'invalid', 'try again', 'failed', 'blocked']:
+                    if err.lower() in (page_text or '').lower():
+                        print(f"    [9] PAGE ERROR: '{err}' detected!")
+                        result["error"] = f"Page error: {err}"
+            except Exception:
+                pass
 
             if "grok.com" in page.url:
                 redirected = True
@@ -506,8 +565,10 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
         # xAI redirects to localhost:56121/callback with auth code.
         # Works for NEW accounts — no auth.x.ai session cookies needed.
         print(f"\n [10/10] OAuth authorization code flow...")
+        # Use pusher's base_url (may differ from config if tunnel)
+        router_url = pusher.base_url if pusher else ocfg.get("base_url", "http://localhost:20128")
         oauth_client = OAuthClient(
-            router_url=ocfg.get("base_url", "http://localhost:20128"),
+            router_url=router_url,
             router_password=ocfg.get("password", "rafi12345"),
             debug=True,
         )
@@ -602,13 +663,14 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
         # STEP 11: Push to 9Router
         # ═══════════════════════════════════════
         print(f"\n [11/11] Pushing to 9Router...")
-        push_result = router.push_via_api(access_token)
+        push_result = pusher.push_via_api(access_token)
         print(f" [11-api] {push_result}")
 
-        push_sql = router.push_via_sqlite(
+        push_sql = pusher.push_via_sqlite(
             access_token=access_token,
             refresh_token=refresh_token,
             email=email,
+            display_name=f"{first_name} {last_name}",
             expires_in=token_result.get("expires_in", 21600),
             scope=token_result.get("scope", ""),
             id_token=token_result.get("id_token", ""),

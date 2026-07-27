@@ -11,9 +11,17 @@ from typing import Optional, Tuple
 
 
 class TurnstileSolver:
-    def __init__(self, extension_path: str, max_retries: int = 15,
+    def __init__(self, extension_path, max_retries: int = 15,
                  timeout: int = 60, debug: bool = False):
-        self.extension_path = os.path.abspath(extension_path)
+        # Accept either a config dict or extension path string
+        if isinstance(extension_path, dict):
+            cfg = extension_path
+            ext = cfg.get("extension_path", "turnstile_patch/")
+            max_retries = cfg.get("max_retries", max_retries)
+            timeout = cfg.get("timeout", timeout)
+        else:
+            ext = extension_path
+        self.extension_path = os.path.abspath(ext)
         self.max_retries = max_retries
         self.timeout = timeout
         self.debug = debug

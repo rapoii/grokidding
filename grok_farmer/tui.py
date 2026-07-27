@@ -128,21 +128,16 @@ farm = FarmState()
 
 # ── Farm Thread ──
 def _run_farm(count: int, use_proxy: bool):
-    import sys
-    from io import StringIO
-    old_stdout, old_stderr = sys.stdout, sys.stderr
-    sys.stdout = StringIO()
-    sys.stderr = StringIO()
     try:
         from .config import load_config
         from .email_generator import GeneratorEmailReader
         from .proxy import ProxyRotator
         from .turnstile import TurnstileSolver
         from .__main__ import run_single_account
+        from .router_push import RouterPusher
 
         cfg = load_config()
-        # Email generated via browser inside run_single_account
-        farm.add_log(f"[green]Loaded {len(domains)} email domains[/green]")
+        farm.add_log("[green]Config loaded[/green]")
 
         proxy_rotator = ProxyRotator([])
         if use_proxy:
@@ -151,7 +146,25 @@ def _run_farm(count: int, use_proxy: bool):
                 proxy_rotator = ProxyRotator(pool)
                 farm.add_log(f"[cyan]Proxy: {len(pool)} proxies[/cyan]")
 
-        solver = TurnstileSolver(cfg)
+        tcfg = cfg.get("turnstile", {})
+        solver = TurnstileSolver(
+            extension_path=tcfg.get("extension_path", "turnstile_patch/"),
+            max_retries=tcfg.get("max_retries", 15),
+            timeout=tcfg.get("timeout", 60),
+            debug=True,
+        )
+        farm.add_log("[cyan]TurnstileSolver ready[/cyan]")
+
+        # Initialize 9Router pusher
+        ncfg = cfg.get("ninrouter", {})
+        pusher = RouterPusher(
+            base_url=ncfg.get("base_url", "http://localhost:20128"),
+            password=ncfg.get("password", "rafi12345"),
+            db_path=ncfg.get("db_path"),
+            debug=True,
+        )
+        pusher.login()
+        farm.add_log("[cyan]9Router logged in[/cyan]")
 
         for i in range(count):
             if farm.stop_requested:
@@ -159,13 +172,14 @@ def _run_farm(count: int, use_proxy: bool):
                 break
             farm.add_log(f"[bold]--- Account {i+1}/{count} ---[/bold]")
             try:
-                email_reader = GeneratorEmailReader(solver._browser) if solver._browser else None
                 result = run_single_account(
                     cfg=cfg, solver=solver, proxy_rotator=proxy_rotator,
-                    email_reader=email_reader, pusher=None,
+                    email_reader=None, pusher=pusher,
                     dry_run=False, email_mode='generator',
                 )
             except Exception as e:
+                import traceback
+                farm.add_log(f"[red]Exception: {traceback.format_exc()[-300:]}[/red]")
                 result = {"success": False, "error": str(e), "email": "?"}
 
             farm.completed += 1
@@ -176,14 +190,14 @@ def _run_farm(count: int, use_proxy: bool):
                 farm.failed += 1
                 farm.add_log(f"[red]FAILED:[/] {result.get('email', '?')} — {result.get('error', '?')[:80]}")
 
+        # Close browser after all accounts
+        solver.close()
         farm.add_log(f"[bold]Done: {farm.successful}/{farm.total} successful[/bold]")
         farm.finish()
     except Exception as e:
-        farm.add_log(f"[red]FATAL: {e}[/red]")
+        import traceback
+        farm.add_log(f"[red]FATAL: {e}\n{traceback.format_exc()[-300:]}[/red]")
         farm.finish()
-    finally:
-        sys.stdout = old_stdout
-        sys.stderr = old_stderr
 
 
 # ── Sidebar Widget ──
