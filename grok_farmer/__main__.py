@@ -500,105 +500,47 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
 
 
         # ═══════════════════════════════════════
-        # STEP 10: OAuth device code flow
+        # STEP 10: OAuth authorization code flow
         # ═══════════════════════════════════════
-        # 9Router device-code returns codeVerifier (PKCE). xAI poll needs it.
-        # We poll xAI directly (9Router poll is broken).
-        # Wait for account to fully provision before OAuth.
-        print(f"\n [10/10] OAuth device code flow...")
-        time.sleep(5)  # Let xAI fully provision the new account
+        # Browser navigates to auth.x.ai/oauth2/authorize (user already logged in).
+        # xAI redirects to localhost:56121/callback with auth code.
+        # Works for NEW accounts — no auth.x.ai session cookies needed.
+        print(f"\n [10/10] OAuth authorization code flow...")
         oauth_client = OAuthClient(
             router_url=ocfg.get("base_url", "http://localhost:20128"),
             router_password=ocfg.get("password", "rafi12345"),
             debug=True,
         )
-        device_result = oauth_client.request_device_code()
-        if "error" in device_result:
-            result["error"] = f"Device code failed: {device_result['error']}"
-            return result
 
-        user_code = device_result.get("user_code")
-        device_code = device_result.get("device_code")
-        interval = device_result.get("interval", 5)
-        print(f" [10] device code: {user_code}")
-        result["steps"]["10_device"] = {"user_code": user_code}
+        # Build auth URL (generates PKCE + state)
+        auth_url = oauth_client.build_auth_url()
+        print(f" [10] Auth URL built, starting callback server...")
 
-        # Start xAI poll BEFORE browser approval (curl_cffi, no code_verifier needed)
-        poll_result = {"token": None, "error": None}
+        # Start callback server in background
+        callback_result = {"params": None, "error": None}
 
-        def _poll():
+        def _wait_callback():
             try:
-                poll_result["token"] = oauth_client.poll_token(
-                    device_code, interval=interval, timeout=180,
-                )
+                callback_result["params"] = oauth_client.wait_for_callback(timeout=180)
             except Exception as e:
-                poll_result["error"] = str(e)
+                callback_result["error"] = str(e)
 
-        poll_thread = threading.Thread(target=_poll, daemon=True)
-        poll_thread.start()
-        print(f" [10] Token poll started (direct xAI)")
+        callback_thread = threading.Thread(target=_wait_callback, daemon=True)
+        callback_thread.start()
 
-        # Warm up session + activate account on grok.com before OAuth.
-        # New accounts may need grok.com interaction to fully provision.
-        page.get("https://grok.com")
+        # Navigate browser to auth URL (user is already logged in from signup)
+        page.get(auth_url)
         time.sleep(3)
-        # Try sending a message to fully activate the account
-        try:
-            input_el = page.ele("tag:textarea", timeout=3)
-            if input_el:
-                input_el.input("hello")
-                time.sleep(1)
-                send_btn = page.ele("text:Send", timeout=2)
-                if send_btn:
-                    send_btn.click()
-                    time.sleep(5)  # Wait for response
-                    print(f" [10] Sent test message on grok.com")
-        except Exception as e:
-            print(f" [10] grok.com activation: {e}")
-        # Navigate to accounts.x.ai to establish cookies
-        page.get("https://accounts.x.ai/account")
-        time.sleep(2)
-
-        # Navigate to CONSENT page directly (not /device which needs a click-through)
-        consent_url = f"https://accounts.x.ai/oauth2/device/consent?user_code={user_code}"
-        page.get(consent_url)
-        time.sleep(3)
-        st = page_state(page, "10-consent")
+        st = page_state(page, "10-auth")
 
         if "sign-in" in page.url:
             print(f" [10] Redirected to sign-in — not logged in!")
-            result["error"] = "Not logged in — cannot approve device code"
+            result["error"] = "Not logged in — cannot authorize"
             return result
 
-        # Click Continue
-        clicked = click_button_js(page, "Continue", label="10-continue")
-        if not clicked:
-            clicked = click_button_js(page, "Approve", label="10-continue-alt")
-        time.sleep(2)
-        st = page_state(page, "10-after-continue")
-
-        # Click Allow — MUST use DrissionPage native click (isTrusted:true)
-        # JS b.click() creates isTrusted:false which React ignores.
-        approval_done = False
-        for allow_attempt in range(5):
-            url = page.url
-            if "done" in url or "authorized" in url or "success" in url:
-                approval_done = True
-                print(f" [10-allow] Already authorized (URL)")
-                break
-            try:
-                body = page.ele("css:body").text if page.ele("css:body", timeout=1) else ""
-                if any(x in body.lower() for x in ["authorized", "success", "you can close", "device authorized"]):
-                    approval_done = True
-                    print(f" [10-allow] Found success text!")
-                    break
-            except Exception:
-                pass
-
-            # Form submission approach: the Allow button's React onClick sets
-            # hidden input[name="action"] to "allow" then submits the form.
-            # JS button.click() skips the onClick handler (isTrusted:false)
-            # causing "Invalid action" error. Fix: set action field manually.
+        # If consent page appears, click Allow
+        if "consent" in page.url or "authorize" in page.url.lower():
+            print(f" [10] Consent page detected, approving...")
             try:
                 js_result = page.run_js(
                     "const btns = document.querySelectorAll('button');"
@@ -616,103 +558,35 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
                     "}"
                     "return 'not_found';"
                 )
-                print(f"    [10-allow-{allow_attempt}] 'Allow': {js_result}")
-                if js_result == "not_found":
-                    time.sleep(2)
-                    continue
+                print(f" [10] Consent: {js_result}")
             except Exception as e:
-                print(f"    [10-allow-{allow_attempt}] error: {e}")
-                time.sleep(2)
-                continue
+                print(f" [10] Consent error: {e}")
 
-            # Fallback: POST directly to auth.x.ai with browser cookies via curl_cffi
-            # Form submission redirects to /device/done even when approval is rejected.
-            # Always try direct POST as backup.
-            try:
-                cookies = page.cookies()
-                cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in cookies if 'x.ai' in c.get('domain', ''))
-                if cookie_str:
-                    from curl_cffi import requests as curl_requests
-                    s = curl_requests.Session(impersonate="chrome131")
-                    approve_resp = s.post(
-                        "https://auth.x.ai/oauth2/device/approve",
-                        data={
-                            "user_code": user_code,
-                            "action": "allow",
-                            "principal_type": "User",
-                            "principal_id": "",
-                        },
-                        headers={
-                            "Content-Type": "application/x-www-form-urlencoded",
-                            "Cookie": cookie_str,
-                        },
-                        allow_redirects=False,
-                        timeout=10,
-                    )
-                    print(f"    [10-direct-{allow_attempt}] approve: {approve_resp.status_code}")
-            except Exception as e:
-                print(f"    [10-direct-{allow_attempt}] error: {e}")
+        # Wait for callback
+        print(f" [10] Waiting for OAuth callback...")
+        callback_thread.join(timeout=185)
 
-            time.sleep(3)
-            url = page.url
-            if "done" in url or "authorized" in url or "success" in url:
-                approval_done = True
-                print(f" [10-allow] Authorized after click!")
-                break
-            try:
-                body = page.ele("css:body").text if page.ele("css:body", timeout=1) else ""
-                if any(x in body.lower() for x in ["authorized", "success", "you can close", "device authorized"]):
-                    approval_done = True
-                    print(f" [10-allow] Success text after click!")
-                    break
-            except Exception:
-                pass
-            time.sleep(2)
+        cb = callback_result.get("params") or {}
+        if callback_result.get("error"):
+            result["error"] = f"Callback error: {callback_result['error']}"
+            return result
+        if "error" in cb:
+            result["error"] = f"OAuth error: {cb['error']}"
+            print(f" [10] FAIL: {cb['error']}")
+            return result
+        if not cb.get("code"):
+            result["error"] = "No authorization code received"
+            print(f" [10] FAIL: no code in callback")
+            return result
 
-        if not approval_done:
-            # Fallback: POST directly to auth.x.ai with browser cookies
-            print(f" [10-allow] Trying direct POST fallback...")
-            try:
-                cookies = page.cookies()
-                cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in cookies if 'x.ai' in c.get('domain', ''))
-                import requests as req
-                approve_resp = req.post(
-                    "https://auth.x.ai/oauth2/device/approve",
-                    data={
-                        "user_code": user_code,
-                        "action": "allow",
-                        "principal_type": "User",
-                        "principal_id": "",
-                    },
-                    headers={
-                        "Content-Type": "application/x-www-form-urlencoded",
-                        "Cookie": cookie_str,
-                        "User-Agent": "Mozilla/5.0",
-                    },
-                    allow_redirects=False,
-                    timeout=10,
-                )
-                print(f" [10-fallback] approve POST: {approve_resp.status_code}")
-                if approve_resp.status_code in (200, 303):
-                    approval_done = True
-                    print(f" [10-fallback] Direct POST succeeded!")
-            except Exception as e:
-                print(f" [10-fallback] error: {e}")
+        print(f" [10] Authorization code received!")
 
-        if not approval_done:
-            print(f" [10-allow] WARN: approval may not have completed")
-
-        # Wait for poll result
-        print(f" [10] Waiting for token poll...")
-        poll_thread.join(timeout=180)
-
-        token_result = poll_result.get("token") or {}
-        if poll_result.get("error"):
-            print(f" [10] Poll thread error: {poll_result['error']}")
-        if "error" in token_result or not token_result.get("access_token"):
-            err = token_result.get("error") or poll_result.get("error") or "no token"
-            result["error"] = f"Token poll failed: {err}"
-            print(f" [10] FAIL: {err}")
+        # Exchange code for tokens
+        print(f" [10] Exchanging code for tokens...")
+        token_result = oauth_client.exchange_code(cb["code"])
+        if "error" in token_result:
+            result["error"] = f"Token exchange failed: {token_result['error']}"
+            print(f" [10] FAIL: {token_result['error']}")
             return result
 
         access_token = token_result.get("access_token", "")
