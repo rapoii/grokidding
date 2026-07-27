@@ -562,7 +562,8 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
         time.sleep(2)
         st = page_state(page, "10-after-continue")
 
-        # Click Allow
+        # Click Allow — MUST use DrissionPage native click (isTrusted:true)
+        # JS b.click() creates isTrusted:false which React ignores.
         approval_done = False
         for allow_attempt in range(5):
             url = page.url
@@ -579,13 +580,18 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
             except Exception:
                 pass
 
-            clicked = click_button_js(page, "Allow", label=f"10-allow-{allow_attempt}")
-            if not clicked:
-                clicked = click_button_js(page, "Authorize", label=f"10-auth-{allow_attempt}")
-            if not clicked:
-                clicked = click_button_js(page, "Confirm", label=f"10-confirm-{allow_attempt}")
-            if not clicked:
-                print(f" [10-allow] No Allow button (attempt {allow_attempt+1})")
+            # Try native DrissionPage click first (isTrusted:true for React)
+            try:
+                allow_btn = page.ele("text:Allow", timeout=2)
+                if allow_btn:
+                    allow_btn.click()
+                    print(f"    [10-allow-{allow_attempt}] 'Allow': native clicked")
+                else:
+                    print(f"    [10-allow-{allow_attempt}] 'Allow': not_found")
+                    time.sleep(2)
+                    continue
+            except Exception as e:
+                print(f"    [10-allow-{allow_attempt}] error: {e}")
                 time.sleep(2)
                 continue
 
@@ -604,6 +610,36 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
             except Exception:
                 pass
             time.sleep(2)
+
+        if not approval_done:
+            # Fallback: POST directly to auth.x.ai with browser cookies
+            print(f" [10-allow] Trying direct POST fallback...")
+            try:
+                cookies = page.cookies()
+                cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in cookies if 'x.ai' in c.get('domain', ''))
+                import requests as req
+                approve_resp = req.post(
+                    "https://auth.x.ai/oauth2/device/approve",
+                    data={
+                        "user_code": user_code,
+                        "action": "allow",
+                        "principal_type": "User",
+                        "principal_id": "",
+                    },
+                    headers={
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "Cookie": cookie_str,
+                        "User-Agent": "Mozilla/5.0",
+                    },
+                    allow_redirects=False,
+                    timeout=10,
+                )
+                print(f" [10-fallback] approve POST: {approve_resp.status_code}")
+                if approve_resp.status_code in (200, 303):
+                    approval_done = True
+                    print(f" [10-fallback] Direct POST succeeded!")
+            except Exception as e:
+                print(f" [10-fallback] error: {e}")
 
         if not approval_done:
             print(f" [10-allow] WARN: approval may not have completed")
