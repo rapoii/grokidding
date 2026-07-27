@@ -504,7 +504,9 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
         # ═══════════════════════════════════════
         # 9Router device-code returns codeVerifier (PKCE). xAI poll needs it.
         # We poll xAI directly (9Router poll is broken).
+        # Wait for account to fully provision before OAuth.
         print(f"\n [10/10] OAuth device code flow...")
+        time.sleep(5)  # Let xAI fully provision the new account
         oauth_client = OAuthClient(
             router_url=ocfg.get("base_url", "http://localhost:20128"),
             router_password=ocfg.get("password", "rafi12345"),
@@ -541,6 +543,8 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
         # Warm up accounts.x.ai session cookies (after signup we're on grok.com,
         # but consent page on accounts.x.ai needs its own session cookies for
         # the approval POST to auth.x.ai to include principal_id)
+        page.get("https://grok.com")
+        time.sleep(2)
         page.get("https://accounts.x.ai/account")
         time.sleep(2)
 
