@@ -454,44 +454,62 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
         }
 
         # ═══════════════════════════════════════
-        # STEP 9: Click "Complete sign up"
+        # STEP 9: Click "Complete sign up" (with Turnstile retry)
         # ═══════════════════════════════════════
         print(f"  [9/10] Clicking 'Complete sign up'...")
-        clicked = click_button_js(page, "Complete sign up", label="9")
-        if not clicked:
-            # Try form submit
-            submit_form_js(page, "input[type=password]", label="9-fallback")
-        time.sleep(5)
-        st = page_state(page, "9")
+        redirected = False
+        for ts_attempt in range(3):
+            # Proactively solve Turnstile BEFORE clicking
+            try:
+                ts_el = page.ele("@name=cf-turnstile-response", timeout=2)
+                if ts_el:
+                    print(f"    [9] Turnstile detected (attempt {ts_attempt+1}), solving...")
+                    solver.solve_turnstile()
+                    time.sleep(2)
+            except Exception:
+                pass
 
-        # Check if redirected to grok.com
-        redirected = "grok.com" in page.url
+            clicked = click_button_js(page, "Complete sign up", label=f"9-{ts_attempt}")
+            if not clicked:
+                submit_form_js(page, "input[type=password]", label=f"9-fb-{ts_attempt}")
+            time.sleep(8)
+            st = page_state(page, f"9-{ts_attempt}")
+
+            if "grok.com" in page.url:
+                redirected = True
+                break
+
+            # If redirected to Cloudflare or other non-xAI page, go back
+            if "accounts.x.ai" not in page.url:
+                print(f"    [9] Redirected to {page.url[:60]}, going back...")
+                page.get(SIGNUP_URL)
+                time.sleep(3)
+                # Re-fill profile if needed
+                h1_now = page.ele("tag:h1", timeout=2)
+                if h1_now and "complete" in (h1_now.text or "").lower():
+                    continue  # still on profile page, retry
+                else:
+                    break  # something else happened
+
         print(f"    [9] redirected to grok.com: {redirected}")
         result["steps"]["9_complete"] = {"redirected": redirected, "url": page.url[:80]}
 
         if not redirected:
-            # Handle Turnstile if needed
-            try:
-                ts_el = page.ele("@name=cf-turnstile-response", timeout=3)
-                if ts_el:
-                    print(f"    [9] Turnstile detected! Solving...")
-                    solver.solve_turnstile()
-                    time.sleep(3)
-                    clicked = click_button_js(page, "Complete sign up", label="9-ts")
-                    time.sleep(5)
-                    redirected = "grok.com" in page.url
-            except Exception:
-                pass
-
-        if not redirected:
-            result["error"] = f"Signup may have failed. URL: {page.url[:60]}"
+            result["error"] = f"Signup may have failed after 3 attempts. URL: {page.url[:60]}"
             # Don't return yet — try OAuth anyway
+
 
         # ═══════════════════════════════════════
         # STEP 10: OAuth device code flow
         # ═══════════════════════════════════════
-        print(f"\n  [10/10] OAuth device code flow...")
-        oauth_client = OAuthClient(debug=True)
+        # 9Router device-code returns codeVerifier (PKCE). xAI poll needs it.
+        # We poll xAI directly (9Router poll is broken).
+        print(f"\n [10/10] OAuth device code flow...")
+        oauth_client = OAuthClient(
+            router_url=ocfg.get("base_url", "http://localhost:20128"),
+            router_password=ocfg.get("password", "rafi12345"),
+            debug=True,
+        )
         device_result = oauth_client.request_device_code()
         if "error" in device_result:
             result["error"] = f"Device code failed: {device_result['error']}"
@@ -499,118 +517,137 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
 
         user_code = device_result.get("user_code")
         device_code = device_result.get("device_code")
-        verification_uri = device_result.get("verification_uri", "https://accounts.x.ai/oauth2/device")
+        code_verifier = device_result.get("codeVerifier", "")
         interval = device_result.get("interval", 5)
-        print(f"    [10] device code: {user_code}")
+        print(f" [10] device code: {user_code}")
         result["steps"]["10_device"] = {"user_code": user_code}
 
-        # Navigate to approval page (code pre-filled if logged in)
-        approval_url = f"{verification_uri}?user_code={user_code}"
-        page.get(approval_url)
-        time.sleep(3)
-        st = page_state(page, "10-approval")
+        # Start direct xAI poll BEFORE browser approval
+        poll_result = {"token": None, "error": None}
 
-        # Check if redirected to sign-in (not logged in)
-        if "sign-in" in page.url:
-            print(f"    [10] Redirected to sign-in — not logged in!")
-            result["error"] = "Not logged in — cannot approve device code"
-            return result
+        def _poll():
+            try:
+                poll_result["token"] = oauth_client.poll_token(
+                    device_code, code_verifier=code_verifier,
+                    interval=interval, timeout=180,
+                )
+            except Exception as e:
+                poll_result["error"] = str(e)
 
-        # Click "Continue"
-        clicked = click_button_js(page, "Continue", label="10-continue")
-        if not clicked:
-            result["error"] = "Could not click Continue on device code page"
-            return result
+        poll_thread = threading.Thread(target=_poll, daemon=True)
+        poll_thread.start()
+        print(f" [10] Token poll started (direct xAI)")
+
+        # Navigate to CONSENT page directly (not /device which needs a click-through)
+        consent_url = f"https://accounts.x.ai/oauth2/device/consent?user_code={user_code}"
+        page.get(consent_url)
         time.sleep(3)
         st = page_state(page, "10-consent")
 
-        # Click "Allow"
-        # Try DrissionPage click first (more reliable for React)
-        allow_clicked = False
-        try:
-            btns = page.eles("tag:button")
-            for b in btns:
-                if (b.text or "").strip() == "Allow":
-                    b.click()
-                    allow_clicked = True
-                    print(f"    [10-allow] DrissionPage: clicked")
-                    break
-        except Exception as e:
-            print(f"    [10-allow] DrissionPage error: {e}")
-
-        if not allow_clicked:
-            allow_clicked = click_button_js(page, "Allow", label="10-allow")
-
-        if not allow_clicked:
-            result["error"] = "Could not click Allow on consent page"
+        if "sign-in" in page.url:
+            print(f" [10] Redirected to sign-in — not logged in!")
+            result["error"] = "Not logged in — cannot approve device code"
             return result
 
-        # Wait for redirect to /done or "Device Authorized"
-        print(f"    [10-allow] Waiting for approval confirmation...")
+        # Click Continue
+        clicked = click_button_js(page, "Continue", label="10-continue")
+        if not clicked:
+            clicked = click_button_js(page, "Approve", label="10-continue-alt")
+        time.sleep(2)
+        st = page_state(page, "10-after-continue")
+
+        # Click Allow
         approval_done = False
-        for _ in range(20):  # up to 20 seconds
-            time.sleep(1)
+        for allow_attempt in range(5):
             url = page.url
-            if "/done" in url or "/approve" in url:
-                # Check for "Device Authorized" text
-                try:
-                    body_text = page.run_js('return document.body?.innerText?.substring(0, 200) || ""')
-                    if "authorized" in body_text.lower() or "device" in body_text.lower():
-                        approval_done = True
-                        print(f"    [10-allow] Approval confirmed: {body_text[:80]}")
-                        break
-                except Exception:
-                    pass
-            if "/done" in url:
+            if "done" in url or "authorized" in url or "success" in url:
                 approval_done = True
+                print(f" [10-allow] Already authorized (URL)")
                 break
+            try:
+                body = page.ele("css:body").text if page.ele("css:body", timeout=1) else ""
+                if any(x in body.lower() for x in ["authorized", "success", "you can close", "device authorized"]):
+                    approval_done = True
+                    print(f" [10-allow] Found success text!")
+                    break
+            except Exception:
+                pass
 
-        page_state(page, "10-done")
+            clicked = click_button_js(page, "Allow", label=f"10-allow-{allow_attempt}")
+            if not clicked:
+                clicked = click_button_js(page, "Authorize", label=f"10-auth-{allow_attempt}")
+            if not clicked:
+                clicked = click_button_js(page, "Confirm", label=f"10-confirm-{allow_attempt}")
+            if not clicked:
+                print(f" [10-allow] No Allow button (attempt {allow_attempt+1})")
+                time.sleep(2)
+                continue
+
+            time.sleep(3)
+            url = page.url
+            if "done" in url or "authorized" in url or "success" in url:
+                approval_done = True
+                print(f" [10-allow] Authorized after click!")
+                break
+            try:
+                body = page.ele("css:body").text if page.ele("css:body", timeout=1) else ""
+                if any(x in body.lower() for x in ["authorized", "success", "you can close", "device authorized"]):
+                    approval_done = True
+                    print(f" [10-allow] Success text after click!")
+                    break
+            except Exception:
+                pass
+            time.sleep(2)
+
         if not approval_done:
-            print(f"    [10-allow] WARN: approval may not have completed")
+            print(f" [10-allow] WARN: approval may not have completed")
 
-        # Poll for token
-        print(f"    [10] Polling for OAuth token...")
-        token_result = oauth_client.poll_token(device_code, interval=interval, timeout=120)
-        if "error" in token_result:
-            result["error"] = f"Token poll failed: {token_result['error']}"
+        # Wait for poll result
+        print(f" [10] Waiting for token poll...")
+        poll_thread.join(timeout=180)
+
+        token_result = poll_result.get("token") or {}
+        if poll_result.get("error"):
+            print(f" [10] Poll thread error: {poll_result['error']}")
+        if "error" in token_result or not token_result.get("access_token"):
+            err = token_result.get("error") or poll_result.get("error") or "no token"
+            result["error"] = f"Token poll failed: {err}"
+            print(f" [10] FAIL: {err}")
             return result
 
         access_token = token_result.get("access_token", "")
         refresh_token = token_result.get("refresh_token", "")
-        print(f"    [10] Token obtained! at={len(access_token)} chars, rt={len(refresh_token)} chars")
+        print(f" [10] Token obtained! at={len(access_token)} chars, rt={len(refresh_token)} chars")
         result["steps"]["10_token"] = {
             "access_token_len": len(access_token),
             "refresh_token_len": len(refresh_token),
             "expires_in": token_result.get("expires_in"),
         }
 
-        # ── PUSH TO 9ROUTER ──
-        print(f"\n  [PUSH] Pushing to 9Router...")
-        push_result = pusher.push_via_api(access_token)
-        result["steps"]["push"] = push_result
+        # ═══════════════════════════════════════
+        # STEP 11: Push to 9Router
+        # ═══════════════════════════════════════
+        print(f"\n [11/11] Pushing to 9Router...")
+        push_result = router.push_via_api(access_token)
+        print(f" [11-api] {push_result}")
 
-        if push_result.get("success"):
+        push_sql = router.push_via_sqlite(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            email=email,
+            expires_in=token_result.get("expires_in", 21600),
+            scope=token_result.get("scope", ""),
+            id_token=token_result.get("id_token", ""),
+        )
+        print(f" [11-sql] {push_sql}")
+
+        if push_result.get("ok") or push_sql.get("ok"):
             result["success"] = True
-            print(f"  [SUCCESS] {email} -> 9Router!")
-            log_event(ocfg["logs_dir"], "SUCCESS", {"email": email})
+            result["steps"]["11_push"] = {"api": push_result, "sql": push_sql}
+            print(f"\n ✅ SUCCESS: {email} -> 9Router!")
+            log_event(ocfg["logs_dir"], "SUCCESS", {"email": email, "at_len": len(access_token)})
         else:
-            # Fallback: SQLite push
-            print(f"  [PUSH] API push failed, trying SQLite...")
-            push_sql = pusher.push_via_sqlite(
-                access_token=access_token,
-                refresh_token=refresh_token,
-                email=email,
-                display_name=f"{first_name} {last_name}",
-                id_token=token_result.get("id_token", ""),
-                expires_in=token_result.get("expires_in", 21600),
-            )
-            result["steps"]["push_sqlite"] = push_sql
-            if push_sql.get("success"):
-                result["success"] = True
-                print(f"  [SUCCESS] {email} -> SQLite!")
-            else:
-                result["error"] = f"Push failed: {push_result} / {push_sql}"
+            result["error"] = f"Push failed: {push_result} / {push_sql}"
 
     except Exception as e:
         result["error"] = f"Exception: {e}"

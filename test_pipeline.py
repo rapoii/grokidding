@@ -1,5 +1,8 @@
 """End-to-end test: generator.email + xAI signup + OTP pipeline.
 
+Run with Python 3.14 (NOT hermes venv):
+  PYTHONPATH="" python test_pipeline.py
+
 Tests:
 1. Launch DrissionPage browser
 2. Generate email from generator.email

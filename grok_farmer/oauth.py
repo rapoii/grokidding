@@ -1,110 +1,148 @@
 """xAI OAuth Device Code flow.
 
 Flow:
-  1. POST auth.x.ai/oauth2/device/code -> user_code + device_code
-  2. User visits verification_uri + authorizes
-  3. POST auth.x.ai/oauth2/token (poll) -> access_token + refresh_token
+  1. GET 9Router /api/oauth/grok-cli/device-code -> user_code + device_code + codeVerifier
+  2. User visits consent page + authorizes (browser)
+  3. POST auth.x.ai/oauth2/token (direct poll, bypass 9Router) -> access_token + refresh_token
 
-Based on 9Router source: open-sse/providers/registry/grok-cli.js
+CRITICAL: xAI requires PKCE code_verifier for device code token exchange,
+but xAI's own /device/code endpoint does NOT return codeVerifier.
+9Router generates codeVerifier and returns it — so we MUST use 9Router
+for step 1, then poll xAI directly for step 3 (9Router's poll is broken).
+
+User-Agent MUST be grok-shell/0.2.99 (not Chrome).
 """
 import time
+import requests
 from typing import Optional
 
 CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828"
-DEVICE_CODE_URL = "https://auth.x.ai/oauth2/device/code"
 TOKEN_URL = "https://auth.x.ai/oauth2/token"
-SCOPE = "openid profile email offline_access grok-cli:access api:access conversations:read conversations:write"
+GROK_SHELL_UA = "grok-shell/0.2.99 (linux; x86_64)"
 
 
 class OAuthClient:
-    def __init__(self, proxy: Optional[str] = None, debug: bool = False, timeout: float = 30.0):
-        self.debug = debug
-        self.timeout = timeout
+    def __init__(
+        self,
+        router_url: str = "http://localhost:20128",
+        router_password: str = "rafi12345",
+        proxy: Optional[str] = None,
+        timeout: int = 30,
+        debug: bool = False,
+    ):
+        self.router_url = router_url.rstrip("/")
+        self.router_password = router_password
         self._proxy = proxy
-        self._session = None
-        self._init_transport()
+        self.timeout = timeout
+        self.debug = debug
+        self._session = self._make_session()
+        self._router_session = self._make_router_session()
 
-    def _init_transport(self):
-        from curl_cffi import requests as curl_requests
-        self._session = curl_requests.Session(impersonate="chrome131")
+    def _make_session(self):
+        s = requests.Session()
+        s.headers.update({
+            "User-Agent": GROK_SHELL_UA,
+            "Accept": "application/json",
+        })
         if self._proxy:
-            self._session.proxies = {"http": self._proxy, "https": self._proxy}
+            s.proxies = {"http": self._proxy, "https": self._proxy}
+        return s
+
+    def _make_router_session(self):
+        s = requests.Session()
+        s.verify = False
+        s.post(
+            f"{self.router_url}/api/auth/login",
+            json={"password": self.router_password},
+            timeout=self.timeout,
+        )
+        return s
 
     def request_device_code(self) -> dict:
-        """Request device code from xAI OAuth.
+        """Request device code via 9Router (returns codeVerifier for PKCE).
 
-        Returns: {user_code, device_code, verification_uri, interval, expires_in}
+        Returns: {user_code, device_code, verification_uri, codeVerifier, interval, expires_in}
         """
-        data = {
-            "client_id": CLIENT_ID,
-            "scope": SCOPE,
-        }
-        resp = self._session.post(
-            DEVICE_CODE_URL,
-            data=data,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        resp = self._router_session.get(
+            f"{self.router_url}/api/oauth/grok-cli/device-code",
             timeout=self.timeout,
         )
         if resp.status_code != 200:
-            return {"error": f"HTTP {resp.status_code}: {resp.text[:300]}"}
-
+            return {"error": f"Device code request failed: {resp.status_code} {resp.text[:200]}"}
         result = resp.json()
         if self.debug:
-            print(f"  [device_code] user_code={result.get('user_code')}")
+            print(f"  [oauth] device_code OK, user_code={result.get('user_code')}")
         return result
 
-    def poll_token(self, device_code: str, interval: int = 5, timeout: int = 120) -> dict:
-        """Poll for OAuth token after device code approval.
+    def poll_token(
+        self, device_code: str, code_verifier: str, interval: int = 5, timeout: int = 300
+    ) -> dict:
+        """Poll xAI directly for access token (bypass 9Router poll).
 
-        Returns: {access_token, refresh_token, id_token, expires_in, scope}
+        CRITICAL: code_verifier from 9Router's device-code response is REQUIRED.
+        Without it, xAI returns invalid_grant.
+
+        Returns: {access_token, refresh_token, expires_in, id_token, ...}
         """
-        deadline = time.time() + timeout
-        wait = interval
-
-        while time.time() < deadline:
-            data = {
-                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-                "device_code": device_code,
-                "client_id": CLIENT_ID,
-            }
+        data = {
+            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+            "device_code": device_code,
+            "client_id": CLIENT_ID,
+            "code_verifier": code_verifier,
+        }
+        start = time.time()
+        while time.time() - start < timeout:
             resp = self._session.post(
                 TOKEN_URL,
                 data=data,
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
                 timeout=self.timeout,
             )
+            body = {}
+            try:
+                body = resp.json()
+            except Exception:
+                body = {"raw": resp.text[:300]}
 
-            if resp.status_code == 200:
-                result = resp.json()
+            if resp.status_code == 200 and "access_token" in body:
                 if self.debug:
-                    print(f"  [poll_token] GOT TOKEN! expires_in={result.get('expires_in')}")
-                return result
+                    print(f"  [oauth] token OK, access_token len={len(body['access_token'])}")
+                return body
 
-            body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
             error = body.get("error", "")
-
-            if error == "authorization_pending":
+            if error in ("authorization_pending", "slow_down"):
+                wait = interval
+                if error == "slow_down":
+                    wait = max(interval, int(body.get("interval", interval)) + 2)
+                if self.debug:
+                    print(f"  [oauth] {error}, wait {wait}s...")
                 time.sleep(wait)
                 continue
-            elif error == "slow_down":
-                wait += 2
-                time.sleep(wait)
-                continue
-            elif error == "expired_token":
-                return {"error": "Device code expired"}
-            elif error == "access_denied":
-                return {"error": "User denied authorization"}
-            else:
-                return {"error": f"HTTP {resp.status_code}: {error}"}
 
-        return {"error": "Polling timed out"}
+            # Terminal errors
+            if self.debug:
+                print(f"  [oauth] poll error: {error or resp.status_code} {str(body)[:200]}")
+            return {"error": error or f"HTTP {resp.status_code}", "detail": body}
+
+        return {"error": "timeout", "detail": f"No token after {timeout}s"}
+
+    def push_to_router(self, access_token: str) -> dict:
+        """Push token to 9Router via exchange API."""
+        resp = self._router_session.post(
+            f"{self.router_url}/api/oauth/grok-cli/exchange",
+            json={"code": access_token},
+            timeout=self.timeout,
+        )
+        if resp.status_code != 200:
+            return {"error": f"Push failed: {resp.status_code} {resp.text[:200]}"}
+        return resp.json()
 
     def refresh_token(self, refresh_token: str) -> dict:
         """Refresh an expired access token."""
         data = {
             "grant_type": "refresh_token",
-            "client_id": CLIENT_ID,
             "refresh_token": refresh_token,
+            "client_id": CLIENT_ID,
         }
         resp = self._session.post(
             TOKEN_URL,
@@ -113,9 +151,5 @@ class OAuthClient:
             timeout=self.timeout,
         )
         if resp.status_code != 200:
-            return {"error": f"Refresh failed: HTTP {resp.status_code}"}
-        result = resp.json()
-        # Keep original refresh_token if not in response
-        if "refresh_token" not in result:
-            result["refresh_token"] = refresh_token
-        return result
+            return {"error": f"Refresh failed: {resp.status_code} {resp.text[:200]}"}
+        return resp.json()

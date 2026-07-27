@@ -34,7 +34,13 @@ def generate_email_from_browser(browser, max_attempts: int = 10) -> str:
     UNSUPPORTED_DOMAINS = {"generator.email", "dharmadi.com"}
 
     tab = browser.new_tab("https://generator.email")
-    time.sleep(5)
+    # Wait for SPA to fully render (extension loading can delay DOM)
+    for _wait in range(20):
+        time.sleep(1)
+        if tab.ele("css:input[id='userName']", timeout=0.5):
+            break
+    else:
+        print("  [email] WARNING: inputs never appeared after 20s")
 
     # Always click "Generate new e-mail" to get a FRESH email (not cached)
     for _ in range(3):
@@ -49,10 +55,18 @@ def generate_email_from_browser(browser, max_attempts: int = 10) -> str:
     for attempt in range(max_attempts):
         email = None
 
-        # Read email from input fields
+        # Read email from input fields — multiple selector strategies
         try:
-            email_input = tab.ele("css:input[aria-label*='username'], input[placeholder*='username']", timeout=3)
-            domain_input = tab.ele("css:input[aria-label*='domain'], input[placeholder*='domain']", timeout=3)
+            email_input = (
+                tab.ele("css:input[id='userName']", timeout=2)
+                or tab.ele("css:input[aria-label*='username']", timeout=1)
+                or tab.ele("css:input[placeholder*='username']", timeout=1)
+            )
+            domain_input = (
+                tab.ele("css:input[id='domainName2']", timeout=2)
+                or tab.ele("css:input[aria-label*='domain']", timeout=1)
+                or tab.ele("css:input[placeholder*='domain']", timeout=1)
+            )
             if email_input and domain_input:
                 user = email_input.attr("value") or ""
                 domain = domain_input.attr("value") or ""
