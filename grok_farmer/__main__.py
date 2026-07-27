@@ -625,6 +625,38 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
                 time.sleep(2)
                 continue
 
+            # Fallback: POST directly to auth.x.ai with browser cookies via curl_cffi
+            # (form submission may fail if auth.x.ai session cookies missing)
+            time.sleep(2)
+            url = page.url
+            if "done" not in url and "authorized" not in url and "success" not in url:
+                print(f"    [10-allow-{allow_attempt}] Form didn't redirect, trying direct POST...")
+                try:
+                    cookies = page.cookies()
+                    cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in cookies if 'x.ai' in c.get('domain', ''))
+                    from curl_cffi import requests as curl_requests
+                    s = curl_requests.Session(impersonate="chrome131")
+                    approve_resp = s.post(
+                        "https://auth.x.ai/oauth2/device/approve",
+                        data={
+                            "user_code": user_code,
+                            "action": "allow",
+                            "principal_type": "User",
+                            "principal_id": "",
+                        },
+                        headers={
+                            "Content-Type": "application/x-www-form-urlencoded",
+                            "Cookie": cookie_str,
+                        },
+                        allow_redirects=False,
+                        timeout=10,
+                    )
+                    print(f"    [10-fallback] approve: {approve_resp.status_code}")
+                    if approve_resp.status_code in (200, 303):
+                        print(f"    [10-fallback] Direct POST succeeded!")
+                except Exception as e:
+                    print(f"    [10-fallback] error: {e}")
+
             time.sleep(3)
             url = page.url
             if "done" in url or "authorized" in url or "success" in url:
