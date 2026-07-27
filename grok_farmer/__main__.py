@@ -538,14 +538,25 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
         poll_thread.start()
         print(f" [10] Token poll started (direct xAI)")
 
-        # Warm up session cookies on ALL x.ai domains.
-        # After signup, browser has cookies for accounts.x.ai but NOT auth.x.ai.
-        # The consent form submits to auth.x.ai — needs session cookies there.
+        # Warm up session + activate account on grok.com before OAuth.
+        # New accounts may need grok.com interaction to fully provision.
         page.get("https://grok.com")
-        time.sleep(2)
+        time.sleep(3)
+        # Try sending a message to fully activate the account
+        try:
+            input_el = page.ele("tag:textarea", timeout=3)
+            if input_el:
+                input_el.input("hello")
+                time.sleep(1)
+                send_btn = page.ele("text:Send", timeout=2)
+                if send_btn:
+                    send_btn.click()
+                    time.sleep(5)  # Wait for response
+                    print(f" [10] Sent test message on grok.com")
+        except Exception as e:
+            print(f" [10] grok.com activation: {e}")
+        # Navigate to accounts.x.ai to establish cookies
         page.get("https://accounts.x.ai/account")
-        time.sleep(2)
-        page.get("https://auth.x.ai")
         time.sleep(2)
 
         # Navigate to CONSENT page directly (not /device which needs a click-through)
