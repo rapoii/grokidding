@@ -573,6 +573,18 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
             debug=True,
         )
 
+        # CRITICAL: Warm up cross-subdomain cookies for auth.x.ai
+        # Without this, consent form submission fails with "Access denied"
+        # because auth.x.ai has no session to identify the user.
+        print(f" [10] Warming up auth.x.ai cookies...")
+        for warmup_url in ["https://grok.com/", "https://accounts.x.ai/account"]:
+            try:
+                page.get(warmup_url)
+                time.sleep(2)
+                print(f" [10] Warmup: {warmup_url} -> {page.url[:60]}")
+            except Exception as e:
+                print(f" [10] Warmup error ({warmup_url}): {e}")
+
         # Build auth URL (generates PKCE + state)
         auth_url = oauth_client.build_auth_url()
         print(f" [10] Auth URL built, starting callback server...")
@@ -591,8 +603,11 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
 
         # Navigate browser to auth URL (user is already logged in from signup)
         page.get(auth_url)
-        time.sleep(3)
+        time.sleep(5)
         st = page_state(page, "10-auth")
+
+        # Log full URL for debugging
+        print(f" [10] Current URL: {page.url[:120]}")
 
         if "sign-in" in page.url:
             print(f" [10] Redirected to sign-in — not logged in!")
@@ -602,26 +617,37 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
         # If consent page appears, click Allow
         if "consent" in page.url or "authorize" in page.url.lower():
             print(f" [10] Consent page detected, approving...")
-            try:
-                js_result = page.run_js(
-                    "const btns = document.querySelectorAll('button');"
-                    "for (const btn of btns) {"
-                    "  if (btn.textContent.trim() === 'Allow') {"
-                    "    const form = btn.form || btn.closest('form');"
-                    "    if (form) {"
-                    "      const actionInput = form.querySelector('input[name=\"action\"]');"
-                    "      if (actionInput) actionInput.value = 'allow';"
-                    "      form.submit();"
-                    "      return 'submitted';"
-                    "    }"
-                    "    return 'no_form';"
-                    "  }"
-                    "}"
-                    "return 'not_found';"
-                )
-                print(f" [10] Consent: {js_result}")
-            except Exception as e:
-                print(f" [10] Consent error: {e}")
+            # Try multiple consent strategies
+            for consent_attempt in range(3):
+                try:
+                    js_result = page.run_js(
+                        "const btns = document.querySelectorAll('button');"
+                        "for (const btn of btns) {"
+                        "  const t = btn.textContent.trim();"
+                        "  if (t === 'Allow' || t === 'Authorize' || t === 'Allow All') {"
+                        "    const form = btn.form || btn.closest('form');"
+                        "    if (form) {"
+                        "      const actionInput = form.querySelector('input[name=\"action\"]');"
+                        "      if (actionInput) actionInput.value = 'allow';"
+                        "      form.submit();"
+                        "      return 'submitted:' + t;"
+                        "    }"
+                        "    btn.click();"
+                        "    return 'clicked:' + t;"
+                        "  }"
+                        "}"
+                        "return 'not_found';"
+                    )
+                    print(f" [10] Consent attempt {consent_attempt+1}: {js_result}")
+                    if js_result and 'not_found' not in str(js_result):
+                        break
+                except Exception as e:
+                    print(f" [10] Consent error: {e}")
+                time.sleep(2)
+
+            # Wait and check where we ended up
+            time.sleep(3)
+            print(f" [10] After consent URL: {page.url[:120]}")
 
         # Wait for callback
         print(f" [10] Waiting for OAuth callback...")
@@ -630,14 +656,76 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
         cb = callback_result.get("params") or {}
         if callback_result.get("error"):
             result["error"] = f"Callback error: {callback_result['error']}"
+            print(f" [10] Callback error detail: {callback_result['error']}")
+            print(f" [10] Browser URL at error: {page.url[:120]}")
             return result
         if "error" in cb:
             result["error"] = f"OAuth error: {cb['error']}"
             print(f" [10] FAIL: {cb['error']}")
+            print(f" [10] Full callback params: {cb}")
             return result
         if not cb.get("code"):
-            result["error"] = "No authorization code received"
-            print(f" [10] FAIL: no code in callback")
+            print(f" [10] Authorization code flow failed, trying device code fallback...")
+            # Fallback: device code flow via 9Router
+            try:
+                push_result_fallback = pusher.push_via_api("")  # trigger re-login
+                dc_resp = pusher._session.get(
+                    f"{router_url}/api/oauth/grok-cli/device-code",
+                    headers={"Cookie": f"auth_token={pusher._cookie}"},
+                    timeout=15,
+                )
+                dc_data = dc_resp.json()
+                print(f" [10] Device code: {dc_data}")
+
+                if dc_data.get("verification_uri_complete"):
+                    # Navigate browser to device code approval
+                    page.get(dc_data["verification_uri_complete"])
+                    time.sleep(3)
+
+                    # Click Continue + Allow (if needed)
+                    for dc_attempt in range(5):
+                        try:
+                            dc_click = page.run_js(
+                                "const btns = document.querySelectorAll('button');"
+                                "for (const b of btns) {"
+                                "  const t = b.textContent.trim().toLowerCase();"
+                                "  if (t === 'continue' || t === 'allow' || t === 'allow all' || t === 'authorize') {"
+                                "    b.click(); return t;"
+                                "  }"
+                                "}"
+                                "return null;"
+                            )
+                            if dc_click:
+                                print(f" [10] Device code click: {dc_click}")
+                            time.sleep(2)
+                        except Exception:
+                            pass
+
+                    # Poll for token
+                    for _poll in range(60):
+                        poll_resp = pusher._session.post(
+                            f"{router_url}/api/oauth/grok-cli/poll",
+                            json={"deviceCode": dc_data.get("device_code"), "codeVerifier": dc_data.get("codeVerifier")},
+                            headers={"Cookie": f"auth_token={pusher._cookie}"},
+                            timeout=15,
+                        )
+                        poll_data = poll_resp.json()
+                        if poll_data.get("success"):
+                            print(f" [10] Device code flow SUCCEEDED!")
+                            result["success"] = True
+                            result["steps"]["10_token"] = {"method": "device_code", "poll": poll_data}
+                            break
+                        elif not poll_data.get("pending"):
+                            print(f" [10] Poll error: {poll_data}")
+                            break
+                        time.sleep(5)
+                    else:
+                        print(f" [10] Device code poll timeout")
+            except Exception as e:
+                print(f" [10] Device code fallback error: {e}")
+
+            if not result.get("success"):
+                result["error"] = "OAuth failed: both auth code and device code flows failed"
             return result
 
         print(f" [10] Authorization code received!")
