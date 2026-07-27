@@ -122,9 +122,6 @@ class OAuthClient:
             "plan": "generic",
             "referrer": "cli-proxy-api",
         }
-        qs = "&".join(f"{k}={requests.utils.quote(str(v))}" for k, v in params.items())
-
-        # Use stdlib for URL encoding (no requests dependency at this stage)
         from urllib.parse import urlencode
         qs = urlencode(params)
         url = f"{AUTHORIZE_URL}?{qs}"
