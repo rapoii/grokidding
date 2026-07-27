@@ -559,183 +559,120 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
 
 
         # ═══════════════════════════════════════
-        # STEP 10: OAuth authorization code flow
+        # STEP 10: OAuth device code flow
         # ═══════════════════════════════════════
-        # Browser navigates to auth.x.ai/oauth2/authorize (user already logged in).
-        # xAI redirects to localhost:56121/callback with auth code.
-        # Works for NEW accounts — no auth.x.ai session cookies needed.
-        print(f"\n [10/10] OAuth authorization code flow...")
-        # Use pusher's base_url (may differ from config if tunnel)
+        # 9Router device-code returns codeVerifier (PKCE). xAI poll needs it.
+        # We poll xAI directly (9Router poll is broken).
         router_url = pusher.base_url if pusher else ocfg.get("base_url", "http://localhost:20128")
+        print(f"\n [10/10] OAuth device code flow...")
         oauth_client = OAuthClient(
             router_url=router_url,
             router_password=ocfg.get("password", "rafi12345"),
             debug=True,
         )
+        device_result = oauth_client.request_device_code()
+        if "error" in device_result:
+            result["error"] = f"Device code failed: {device_result['error']}"
+            return result
 
-        # CRITICAL: Warm up cross-subdomain cookies for auth.x.ai
-        # Without this, consent form submission fails with "Access denied"
-        # because auth.x.ai has no session to identify the user.
-        print(f" [10] Warming up auth.x.ai cookies...")
-        for warmup_url in ["https://grok.com/", "https://accounts.x.ai/account"]:
+        user_code = device_result.get("user_code")
+        device_code = device_result.get("device_code")
+        code_verifier = device_result.get("codeVerifier", "")
+        interval = device_result.get("interval", 5)
+        print(f" [10] device code: {user_code}")
+        result["steps"]["10_device"] = {"user_code": user_code}
+
+        # Start direct xAI poll BEFORE browser approval
+        poll_result = {"token": None, "error": None}
+
+        def _poll():
             try:
-                page.get(warmup_url)
-                time.sleep(2)
-                print(f" [10] Warmup: {warmup_url} -> {page.url[:60]}")
+                poll_result["token"] = oauth_client.poll_token(
+                    device_code, code_verifier=code_verifier,
+                    interval=interval, timeout=180,
+                )
             except Exception as e:
-                print(f" [10] Warmup error ({warmup_url}): {e}")
+                poll_result["error"] = str(e)
 
-        # Build auth URL (generates PKCE + state)
-        auth_url = oauth_client.build_auth_url()
-        print(f" [10] Auth URL built, starting callback server...")
+        poll_thread = threading.Thread(target=_poll, daemon=True)
+        poll_thread.start()
+        print(f" [10] Token poll started (direct xAI)")
 
-        # Start callback server in background
-        callback_result = {"params": None, "error": None}
-
-        def _wait_callback():
-            try:
-                callback_result["params"] = oauth_client.wait_for_callback(timeout=180)
-            except Exception as e:
-                callback_result["error"] = str(e)
-
-        callback_thread = threading.Thread(target=_wait_callback, daemon=True)
-        callback_thread.start()
-
-        # Navigate browser to auth URL (user is already logged in from signup)
-        page.get(auth_url)
-        time.sleep(5)
-        st = page_state(page, "10-auth")
-
-        # Log full URL for debugging
-        print(f" [10] Current URL: {page.url[:120]}")
+        # Navigate to CONSENT page directly (not /device which needs a click-through)
+        consent_url = f"https://accounts.x.ai/oauth2/device/consent?user_code={user_code}"
+        page.get(consent_url)
+        time.sleep(3)
+        st = page_state(page, "10-consent")
 
         if "sign-in" in page.url:
             print(f" [10] Redirected to sign-in — not logged in!")
-            result["error"] = "Not logged in — cannot authorize"
+            result["error"] = "Not logged in — cannot approve device code"
             return result
 
-        # If consent page appears, click Allow
-        if "consent" in page.url or "authorize" in page.url.lower():
-            print(f" [10] Consent page detected, approving...")
-            # Try multiple consent strategies
-            for consent_attempt in range(3):
-                try:
-                    js_result = page.run_js(
-                        "const btns = document.querySelectorAll('button');"
-                        "for (const btn of btns) {"
-                        "  const t = btn.textContent.trim();"
-                        "  if (t === 'Allow' || t === 'Authorize' || t === 'Allow All') {"
-                        "    const form = btn.form || btn.closest('form');"
-                        "    if (form) {"
-                        "      const actionInput = form.querySelector('input[name=\"action\"]');"
-                        "      if (actionInput) actionInput.value = 'allow';"
-                        "      form.submit();"
-                        "      return 'submitted:' + t;"
-                        "    }"
-                        "    btn.click();"
-                        "    return 'clicked:' + t;"
-                        "  }"
-                        "}"
-                        "return 'not_found';"
-                    )
-                    print(f" [10] Consent attempt {consent_attempt+1}: {js_result}")
-                    if js_result and 'not_found' not in str(js_result):
-                        break
-                except Exception as e:
-                    print(f" [10] Consent error: {e}")
-                time.sleep(2)
+        # Click Continue
+        clicked = click_button_js(page, "Continue", label="10-continue")
+        if not clicked:
+            clicked = click_button_js(page, "Approve", label="10-continue-alt")
+        time.sleep(2)
+        st = page_state(page, "10-after-continue")
 
-            # Wait and check where we ended up
-            time.sleep(3)
-            print(f" [10] After consent URL: {page.url[:120]}")
-
-        # Wait for callback
-        print(f" [10] Waiting for OAuth callback...")
-        callback_thread.join(timeout=185)
-
-        cb = callback_result.get("params") or {}
-        if callback_result.get("error"):
-            result["error"] = f"Callback error: {callback_result['error']}"
-            print(f" [10] Callback error detail: {callback_result['error']}")
-            print(f" [10] Browser URL at error: {page.url[:120]}")
-            return result
-        if "error" in cb:
-            result["error"] = f"OAuth error: {cb['error']}"
-            print(f" [10] FAIL: {cb['error']}")
-            print(f" [10] Full callback params: {cb}")
-            return result
-        if not cb.get("code"):
-            print(f" [10] Authorization code flow failed, trying device code fallback...")
-            # Fallback: device code flow via 9Router
+        # Click Allow
+        approval_done = False
+        for allow_attempt in range(5):
+            url = page.url
+            if "done" in url or "authorized" in url or "success" in url:
+                approval_done = True
+                print(f" [10-allow] Already authorized (URL)")
+                break
             try:
-                push_result_fallback = pusher.push_via_api("")  # trigger re-login
-                dc_resp = pusher._session.get(
-                    f"{router_url}/api/oauth/grok-cli/device-code",
-                    headers={"Cookie": f"auth_token={pusher._cookie}"},
-                    timeout=15,
-                )
-                dc_data = dc_resp.json()
-                print(f" [10] Device code: {dc_data}")
+                body = page.ele("css:body").text if page.ele("css:body", timeout=1) else ""
+                if any(x in body.lower() for x in ["authorized", "success", "you can close", "device authorized"]):
+                    approval_done = True
+                    print(f" [10-allow] Found success text!")
+                    break
+            except Exception:
+                pass
 
-                if dc_data.get("verification_uri_complete"):
-                    # Navigate browser to device code approval
-                    page.get(dc_data["verification_uri_complete"])
-                    time.sleep(3)
+            clicked = click_button_js(page, "Allow", label=f"10-allow-{allow_attempt}")
+            if not clicked:
+                clicked = click_button_js(page, "Authorize", label=f"10-auth-{allow_attempt}")
+            if not clicked:
+                clicked = click_button_js(page, "Confirm", label=f"10-confirm-{allow_attempt}")
+            if not clicked:
+                print(f" [10-allow] No Allow button (attempt {allow_attempt+1})")
+                time.sleep(2)
+                continue
 
-                    # Click Continue + Allow (if needed)
-                    for dc_attempt in range(5):
-                        try:
-                            dc_click = page.run_js(
-                                "const btns = document.querySelectorAll('button');"
-                                "for (const b of btns) {"
-                                "  const t = b.textContent.trim().toLowerCase();"
-                                "  if (t === 'continue' || t === 'allow' || t === 'allow all' || t === 'authorize') {"
-                                "    b.click(); return t;"
-                                "  }"
-                                "}"
-                                "return null;"
-                            )
-                            if dc_click:
-                                print(f" [10] Device code click: {dc_click}")
-                            time.sleep(2)
-                        except Exception:
-                            pass
+            time.sleep(3)
+            url = page.url
+            if "done" in url or "authorized" in url or "success" in url:
+                approval_done = True
+                print(f" [10-allow] Authorized after click!")
+                break
+            try:
+                body = page.ele("css:body").text if page.ele("css:body", timeout=1) else ""
+                if any(x in body.lower() for x in ["authorized", "success", "you can close", "device authorized"]):
+                    approval_done = True
+                    print(f" [10-allow] Success text after click!")
+                    break
+            except Exception:
+                pass
+            time.sleep(2)
 
-                    # Poll for token
-                    for _poll in range(60):
-                        poll_resp = pusher._session.post(
-                            f"{router_url}/api/oauth/grok-cli/poll",
-                            json={"deviceCode": dc_data.get("device_code"), "codeVerifier": dc_data.get("codeVerifier")},
-                            headers={"Cookie": f"auth_token={pusher._cookie}"},
-                            timeout=15,
-                        )
-                        poll_data = poll_resp.json()
-                        if poll_data.get("success"):
-                            print(f" [10] Device code flow SUCCEEDED!")
-                            result["success"] = True
-                            result["steps"]["10_token"] = {"method": "device_code", "poll": poll_data}
-                            break
-                        elif not poll_data.get("pending"):
-                            print(f" [10] Poll error: {poll_data}")
-                            break
-                        time.sleep(5)
-                    else:
-                        print(f" [10] Device code poll timeout")
-            except Exception as e:
-                print(f" [10] Device code fallback error: {e}")
+        if not approval_done:
+            print(f" [10-allow] WARN: approval may not have completed")
 
-            if not result.get("success"):
-                result["error"] = "OAuth failed: both auth code and device code flows failed"
-            return result
+        # Wait for poll result
+        print(f" [10] Waiting for token poll...")
+        poll_thread.join(timeout=180)
 
-        print(f" [10] Authorization code received!")
-
-        # Exchange code for tokens
-        print(f" [10] Exchanging code for tokens...")
-        token_result = oauth_client.exchange_code(cb["code"])
-        if "error" in token_result:
-            result["error"] = f"Token exchange failed: {token_result['error']}"
-            print(f" [10] FAIL: {token_result['error']}")
+        token_result = poll_result.get("token") or {}
+        if poll_result.get("error"):
+            print(f" [10] Poll thread error: {poll_result['error']}")
+        if "error" in token_result or not token_result.get("access_token"):
+            err = token_result.get("error") or poll_result.get("error") or "no token"
+            result["error"] = f"Token poll failed: {err}"
+            print(f" [10] FAIL: {err}")
             return result
 
         access_token = token_result.get("access_token", "")
@@ -746,6 +683,32 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
             "refresh_token_len": len(refresh_token),
             "expires_in": token_result.get("expires_in"),
         }
+
+        # ═══════════════════════════════════════
+        # STEP 11: Push to 9Router
+        # ═══════════════════════════════════════
+        print(f"\n [11/11] Pushing to 9Router...")
+        push_result = pusher.push_via_api(access_token)
+        print(f" [11-api] {push_result}")
+
+        push_sql = pusher.push_via_sqlite(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            email=email,
+            display_name=f"{first_name} {last_name}",
+            expires_in=token_result.get("expires_in", 21600),
+            scope=token_result.get("scope", ""),
+            id_token=token_result.get("id_token", ""),
+        )
+        print(f" [11-sql] {push_sql}")
+
+        if push_result.get("ok") or push_sql.get("ok"):
+            result["success"] = True
+            result["steps"]["11_push"] = {"api": push_result, "sql": push_sql}
+            print(f"\n ✅ SUCCESS: {email} -> 9Router!")
+            log_event(ocfg["logs_dir"], "SUCCESS", {"email": email, "at_len": len(access_token)})
+        else:
+            result["error"] = f"Push failed: {push_result} / {push_sql}"
 
         # ═══════════════════════════════════════
         # STEP 11: Push to 9Router
