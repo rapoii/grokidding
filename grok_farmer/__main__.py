@@ -540,12 +540,14 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
         poll_thread.start()
         print(f" [10] Token poll started (direct xAI)")
 
-        # Warm up accounts.x.ai session cookies (after signup we're on grok.com,
-        # but consent page on accounts.x.ai needs its own session cookies for
-        # the approval POST to auth.x.ai to include principal_id)
+        # Warm up session cookies on ALL x.ai domains.
+        # After signup, browser has cookies for accounts.x.ai but NOT auth.x.ai.
+        # The consent form submits to auth.x.ai — needs session cookies there.
         page.get("https://grok.com")
         time.sleep(2)
         page.get("https://accounts.x.ai/account")
+        time.sleep(2)
+        page.get("https://auth.x.ai")
         time.sleep(2)
 
         # Navigate to CONSENT page directly (not /device which needs a click-through)
@@ -589,7 +591,7 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
             # JS button.click() skips the onClick handler (isTrusted:false)
             # causing "Invalid action" error. Fix: set action field manually.
             try:
-                result = page.run_js(
+                js_result = page.run_js(
                     "const btns = document.querySelectorAll('button');"
                     "for (const btn of btns) {"
                     "  if (btn.textContent.trim() === 'Allow') {"
@@ -605,8 +607,8 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
                     "}"
                     "return 'not_found';"
                 )
-                print(f"    [10-allow-{allow_attempt}] 'Allow': {result}")
-                if result == "not_found":
+                print(f"    [10-allow-{allow_attempt}] 'Allow': {js_result}")
+                if js_result == "not_found":
                     time.sleep(2)
                     continue
             except Exception as e:
