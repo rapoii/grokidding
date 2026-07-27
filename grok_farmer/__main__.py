@@ -584,14 +584,29 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
             except Exception:
                 pass
 
-            # Try native DrissionPage click first (isTrusted:true for React)
+            # Form submission approach: the Allow button's React onClick sets
+            # hidden input[name="action"] to "allow" then submits the form.
+            # JS button.click() skips the onClick handler (isTrusted:false)
+            # causing "Invalid action" error. Fix: set action field manually.
             try:
-                allow_btn = page.ele("text:Allow", timeout=2)
-                if allow_btn:
-                    allow_btn.click()
-                    print(f"    [10-allow-{allow_attempt}] 'Allow': native clicked")
-                else:
-                    print(f"    [10-allow-{allow_attempt}] 'Allow': not_found")
+                result = page.run_js(
+                    "const btns = document.querySelectorAll('button');"
+                    "for (const btn of btns) {"
+                    "  if (btn.textContent.trim() === 'Allow') {"
+                    "    const form = btn.form || btn.closest('form');"
+                    "    if (form) {"
+                    "      const actionInput = form.querySelector('input[name=\"action\"]');"
+                    "      if (actionInput) actionInput.value = 'allow';"
+                    "      form.submit();"
+                    "      return 'submitted';"
+                    "    }"
+                    "    return 'no_form';"
+                    "  }"
+                    "}"
+                    "return 'not_found';"
+                )
+                print(f"    [10-allow-{allow_attempt}] 'Allow': {result}")
+                if result == "not_found":
                     time.sleep(2)
                     continue
             except Exception as e:
