@@ -519,19 +519,17 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
 
         user_code = device_result.get("user_code")
         device_code = device_result.get("device_code")
-        code_verifier = device_result.get("codeVerifier", "")
         interval = device_result.get("interval", 5)
         print(f" [10] device code: {user_code}")
         result["steps"]["10_device"] = {"user_code": user_code}
 
-        # Start direct xAI poll BEFORE browser approval
+        # Start xAI poll BEFORE browser approval (curl_cffi, no code_verifier needed)
         poll_result = {"token": None, "error": None}
 
         def _poll():
             try:
                 poll_result["token"] = oauth_client.poll_token(
-                    device_code, code_verifier=code_verifier,
-                    interval=interval, timeout=180,
+                    device_code, interval=interval, timeout=180,
                 )
             except Exception as e:
                 poll_result["error"] = str(e)

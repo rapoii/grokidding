@@ -1,24 +1,24 @@
 """xAI OAuth Device Code flow.
 
 Flow:
-  1. GET 9Router /api/oauth/grok-cli/device-code -> user_code + device_code + codeVerifier
+  1. POST auth.x.ai/oauth2/device/code -> user_code + device_code
   2. User visits consent page + authorizes (browser)
-  3. POST auth.x.ai/oauth2/token (direct poll, bypass 9Router) -> access_token + refresh_token
+  3. POST auth.x.ai/oauth2/token (poll) -> access_token + refresh_token
 
-CRITICAL: xAI requires PKCE code_verifier for device code token exchange,
-but xAI's own /device/code endpoint does NOT return codeVerifier.
-9Router generates codeVerifier and returns it — so we MUST use 9Router
-for step 1, then poll xAI directly for step 3 (9Router's poll is broken).
+CRITICAL: MUST use curl_cffi with impersonate="chrome131" for all xAI API calls.
+Plain requests library causes xAI to require code_verifier (PKCE) which
+xAI's device code endpoint does NOT return. curl_cffi Chrome fingerprint
+bypasses this requirement.
 
-User-Agent MUST be grok-shell/0.2.99 (not Chrome).
+Based on proven working code (aea98a1) + verified 2026-07-27.
 """
 import time
-import requests
 from typing import Optional
 
 CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828"
+DEVICE_CODE_URL = "https://auth.x.ai/oauth2/device/code"
 TOKEN_URL = "https://auth.x.ai/oauth2/token"
-GROK_SHELL_UA = "grok-shell/0.2.99 (linux; x86_64)"
+SCOPE = "openid profile email offline_access grok-cli:access api:access conversations:read conversations:write"
 
 
 class OAuthClient:
@@ -39,16 +39,14 @@ class OAuthClient:
         self._router_session = self._make_router_session()
 
     def _make_session(self):
-        s = requests.Session()
-        s.headers.update({
-            "User-Agent": GROK_SHELL_UA,
-            "Accept": "application/json",
-        })
+        from curl_cffi import requests as curl_requests
+        s = curl_requests.Session(impersonate="chrome131")
         if self._proxy:
             s.proxies = {"http": self._proxy, "https": self._proxy}
         return s
 
     def _make_router_session(self):
+        import requests
         s = requests.Session()
         s.verify = False
         s.post(
@@ -59,28 +57,26 @@ class OAuthClient:
         return s
 
     def request_device_code(self) -> dict:
-        """Request device code via 9Router (returns codeVerifier for PKCE).
+        """Request device code from xAI directly (no 9Router, no codeVerifier needed).
 
-        Returns: {user_code, device_code, verification_uri, codeVerifier, interval, expires_in}
+        Returns: {user_code, device_code, verification_uri, interval, expires_in}
         """
-        resp = self._router_session.get(
-            f"{self.router_url}/api/oauth/grok-cli/device-code",
+        data = {"client_id": CLIENT_ID, "scope": SCOPE}
+        resp = self._session.post(
+            DEVICE_CODE_URL,
+            data=data,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
             timeout=self.timeout,
         )
         if resp.status_code != 200:
-            return {"error": f"Device code request failed: {resp.status_code} {resp.text[:200]}"}
+            return {"error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
         result = resp.json()
         if self.debug:
             print(f"  [oauth] device_code OK, user_code={result.get('user_code')}")
         return result
 
-    def poll_token(
-        self, device_code: str, code_verifier: str, interval: int = 5, timeout: int = 300
-    ) -> dict:
-        """Poll xAI directly for access token (bypass 9Router poll).
-
-        CRITICAL: code_verifier from 9Router's device-code response is REQUIRED.
-        Without it, xAI returns invalid_grant.
+    def poll_token(self, device_code: str, interval: int = 5, timeout: int = 300) -> dict:
+        """Poll xAI directly for access token. No code_verifier needed (curl_cffi).
 
         Returns: {access_token, refresh_token, expires_in, id_token, ...}
         """
@@ -88,7 +84,6 @@ class OAuthClient:
             "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
             "device_code": device_code,
             "client_id": CLIENT_ID,
-            "code_verifier": code_verifier,
         }
         start = time.time()
         while time.time() - start < timeout:
@@ -119,7 +114,6 @@ class OAuthClient:
                 time.sleep(wait)
                 continue
 
-            # Terminal errors
             if self.debug:
                 print(f"  [oauth] poll error: {error or resp.status_code} {str(body)[:200]}")
             return {"error": error or f"HTTP {resp.status_code}", "detail": body}
