@@ -323,12 +323,49 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
         # STEP 5: Click "Sign up" (submit email)
         # ═══════════════════════════════════════
         print(f"  [5/10] Clicking Sign up...")
-        clicked = click_button_js(page, "Sign up", label="5")
-        if not clicked:
-            submit_form_js(page, "input[type=email]", label="5-fallback")
-        time.sleep(3)
+        # Try multiple submission methods until page advances
+        submitted = False
+        for submit_attempt in range(5):
+            # Method 1: JS click on "Sign up" button
+            clicked = click_button_js(page, "Sign up", label=f"5-{submit_attempt}")
+            time.sleep(2)
+
+            # Check if page advanced to "Verify your email"
+            h1_now = page.ele("tag:h1", timeout=1)
+            h1_text = (h1_now.text or "").lower() if h1_now else ""
+            if "verify" in h1_text:
+                submitted = True
+                break
+
+            # Method 2: Enter key on email input
+            try:
+                email_el = page.ele("tag:input@type=email", timeout=1)
+                if email_el:
+                    email_el.input("\n")
+                    time.sleep(2)
+                    h1_now = page.ele("tag:h1", timeout=1)
+                    h1_text = (h1_now.text or "").lower() if h1_now else ""
+                    if "verify" in h1_text:
+                        submitted = True
+                        break
+            except Exception:
+                pass
+
+            # Method 3: Form submit via JS
+            submit_form_js(page, "input[type=email]", label=f"5-fb-{submit_attempt}")
+            time.sleep(2)
+            h1_now = page.ele("tag:h1", timeout=1)
+            h1_text = (h1_now.text or "").lower() if h1_now else ""
+            if "verify" in h1_text:
+                submitted = True
+                break
+
+            print(f"    [5] Attempt {submit_attempt+1} failed, retrying...")
+
         st = page_state(page, "5")
-        result["steps"]["5_signup"] = {"h1": st.get("h1")}
+        result["steps"]["5_signup"] = {"h1": st.get("h1"), "submitted": submitted}
+        if not submitted:
+            print(f"    [5] WARN: Could not advance to verify page after 5 attempts")
 
         # ═══════════════════════════════════════
         # STEP 6: Wait for OTP
@@ -534,27 +571,43 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
             except Exception:
                 pass
 
-            if "grok.com" in page.url:
+            try:
+                current_url = page.url
+            except Exception as nav_err:
+                if "disconnected" in str(nav_err).lower():
+                    print(f"    [9] Page disconnected — likely redirected to grok.com")
+                    redirected = True
+                    break
+                raise
+
+            if "grok.com" in current_url:
                 redirected = True
                 break
 
             # If redirected to Cloudflare or other non-xAI page, go back
-            if "accounts.x.ai" not in page.url:
-                print(f"    [9] Redirected to {page.url[:60]}, going back...")
+            if "accounts.x.ai" not in current_url:
+                print(f"    [9] Redirected to {current_url[:60]}, going back...")
                 page.get(SIGNUP_URL)
                 time.sleep(3)
-                # Re-fill profile if needed
                 h1_now = page.ele("tag:h1", timeout=2)
                 if h1_now and "complete" in (h1_now.text or "").lower():
-                    continue  # still on profile page, retry
+                    continue
                 else:
-                    break  # something else happened
+                    break
 
+        try:
+            final_url = page.url
+        except Exception:
+            final_url = "disconnected"
         print(f"    [9] redirected to grok.com: {redirected}")
-        result["steps"]["9_complete"] = {"redirected": redirected, "url": page.url[:80]}
+        result["steps"]["9_complete"] = {"redirected": redirected, "url": final_url[:80]}
 
         if not redirected:
-            result["error"] = f"Signup may have failed after 3 attempts. URL: {page.url[:60]}"
+            try:
+                err_url = page.url[:60]
+            except Exception:
+                err_url = "disconnected"
+            result["error"] = f"Signup may have failed after 3 attempts. URL: {err_url}"
             # Don't return yet — try OAuth anyway
 
 
@@ -563,6 +616,18 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
         # ═══════════════════════════════════════
         # 9Router device-code returns codeVerifier (PKCE). xAI poll needs it.
         # We poll xAI directly (9Router poll is broken).
+        # Reconnect to browser if page was disconnected during step 9 redirect
+        try:
+            _ = page.url  # test connection
+        except Exception:
+            print(f" [10] Page disconnected after redirect, reconnecting...")
+            try:
+                page = solver._browser.get_tab()
+                print(f" [10] Reconnected: {page.url[:60]}")
+            except Exception:
+                page = solver._browser
+                print(f" [10] Using main browser object")
+
         router_url = pusher.base_url if pusher else ocfg.get("base_url", "http://localhost:20128")
         print(f"\n [10/10] OAuth device code flow...")
         oauth_client = OAuthClient(
@@ -638,6 +703,36 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
                 clicked = click_button_js(page, "Authorize", label=f"10-auth-{allow_attempt}")
             if not clicked:
                 clicked = click_button_js(page, "Confirm", label=f"10-confirm-{allow_attempt}")
+            if not clicked:
+                # Form submit fallback (proven in message.txt session)
+                try:
+                    form_result = page.run_js(
+                        "const form = document.querySelector('form');"
+                        "if (form) {"
+                        "  const actionInput = form.querySelector('input[name=\"action\"]');"
+                        "  if (actionInput) actionInput.value = 'allow';"
+                        "  form.submit();"
+                        "  return 'form_submitted';"
+                        "}"
+                        "return 'no_form';"
+                    )
+                    if form_result == 'form_submitted':
+                        clicked = True
+                        print(f" [10-allow] Form submit: {form_result}")
+                except Exception as e:
+                    print(f" [10-allow] Form submit error: {e}")
+            if not clicked:
+                # Native DrissionPage click (isTrusted:true)
+                try:
+                    for btn_text in ["Allow", "Authorize", "Confirm", "Allow All"]:
+                        el = page.ele(f"text:{btn_text}", timeout=1)
+                        if el:
+                            el.click()
+                            clicked = True
+                            print(f" [10-allow] Native click: {btn_text}")
+                            break
+                except Exception as e:
+                    print(f" [10-allow] Native click error: {e}")
             if not clicked:
                 print(f" [10-allow] No Allow button (attempt {allow_attempt+1})")
                 time.sleep(2)
