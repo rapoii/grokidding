@@ -389,11 +389,25 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
         # ═══════════════════════════════════════
         # STEP 7: Type OTP (auto-submits after 6 chars)
         # ═══════════════════════════════════════
+        # Reconnect if page disconnected (generator.email tab may interfere)
+        try:
+            _ = page.url
+        except Exception:
+            print(f"    [7] Page disconnected, reconnecting...")
+            try:
+                page = solver._browser.latest_tab
+            except Exception:
+                page = solver._browser.get_tab(1)  # first tab
+            print(f"    [7] Reconnected: {page.url[:60]}")
+
         # Wait until we're on the OTP verification page
-        otp_page = wait_for_h1(page, "verify your email", timeout=10)
-        if not otp_page:
-            h1_now = page.ele("tag:h1", timeout=1)
-            print(f"    [7] WARN: not on verify page, h1={h1_now.text if h1_now else '?'}")
+        try:
+            otp_page = wait_for_h1(page, "verify your email", timeout=10)
+            if not otp_page:
+                h1_now = page.ele("tag:h1", timeout=1)
+                print(f"    [7] WARN: not on verify page, h1={h1_now.text if h1_now else '?'}")
+        except Exception:
+            print(f"    [7] WARN: page error during wait_for_h1, continuing...")
         print(f"  [7/10] Typing OTP {otp_clean}...")
         # Find OTP input — try specific selectors first, avoid email/password fields
         otp_el = None
@@ -630,6 +644,9 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
 
         router_url = pusher.base_url if pusher else ocfg.get("base_url", "http://localhost:20128")
         print(f"\n [10/10] OAuth device code flow...")
+        # Re-login to 9Router (session may have expired during signup)
+        if pusher:
+            pusher.login()
         oauth_client = OAuthClient(
             router_url=router_url,
             router_password=ocfg.get("password", "rafi12345"),
@@ -698,31 +715,26 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
             except Exception:
                 pass
 
-            clicked = click_button_js(page, "Allow", label=f"10-allow-{allow_attempt}")
+            # Strategy 1: Form submit (proven in message.txt — most reliable)
+            try:
+                form_result = page.run_js(
+                    "const form = document.querySelector('form');"
+                    "if (form) {"
+                    "  const actionInput = form.querySelector('input[name=\"action\"]');"
+                    "  if (actionInput) actionInput.value = 'allow';"
+                    "  form.submit();"
+                    "  return 'form_submitted';"
+                    "}"
+                    "return 'no_form';"
+                )
+                if form_result == 'form_submitted':
+                    clicked = True
+                    print(f" [10-allow] Form submit: {form_result}")
+            except Exception:
+                pass
+
+            # Strategy 2: Native DrissionPage click (isTrusted:true)
             if not clicked:
-                clicked = click_button_js(page, "Authorize", label=f"10-auth-{allow_attempt}")
-            if not clicked:
-                clicked = click_button_js(page, "Confirm", label=f"10-confirm-{allow_attempt}")
-            if not clicked:
-                # Form submit fallback (proven in message.txt session)
-                try:
-                    form_result = page.run_js(
-                        "const form = document.querySelector('form');"
-                        "if (form) {"
-                        "  const actionInput = form.querySelector('input[name=\"action\"]');"
-                        "  if (actionInput) actionInput.value = 'allow';"
-                        "  form.submit();"
-                        "  return 'form_submitted';"
-                        "}"
-                        "return 'no_form';"
-                    )
-                    if form_result == 'form_submitted':
-                        clicked = True
-                        print(f" [10-allow] Form submit: {form_result}")
-                except Exception as e:
-                    print(f" [10-allow] Form submit error: {e}")
-            if not clicked:
-                # Native DrissionPage click (isTrusted:true)
                 try:
                     for btn_text in ["Allow", "Authorize", "Confirm", "Allow All"]:
                         el = page.ele(f"text:{btn_text}", timeout=1)
@@ -731,10 +743,17 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
                             clicked = True
                             print(f" [10-allow] Native click: {btn_text}")
                             break
-                except Exception as e:
-                    print(f" [10-allow] Native click error: {e}")
+                except Exception:
+                    pass
+
+            # Strategy 3: JS button click (last resort — may not trigger React)
             if not clicked:
-                print(f" [10-allow] No Allow button (attempt {allow_attempt+1})")
+                clicked = click_button_js(page, "Allow", label=f"10-allow-{allow_attempt}")
+                if not clicked:
+                    clicked = click_button_js(page, "Authorize", label=f"10-auth-{allow_attempt}")
+
+            if not clicked:
+                print(f" [10-allow] No Allow button found (attempt {allow_attempt+1})")
                 time.sleep(2)
                 continue
 
