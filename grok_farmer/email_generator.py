@@ -12,6 +12,7 @@ Flow:
 """
 
 import re
+import os
 import time
 import json
 import threading
@@ -223,22 +224,22 @@ class GeneratorEmailReader:
 
     def wait_for_otp(self, timeout: int = 180, poll_interval: float = 3.0,
                      target_email: str = "", **kwargs) -> Optional[str]:
-        """Wait for xAI OTP via WebSocket real-time notifications.
+        """Wait for xAI OTP — WebSocket mode (default) or legacy page-refresh polling.
 
-        Flow:
-        1. Open generator.email inbox ONCE (with ads blocked at CDP level)
-        2. Inject WebSocket listener into page
-        3. Poll window._otp_messages every poll_interval seconds
-        4. When xAI email arrives, fetch email content via AJAX
-        5. Extract OTP code
-
-        Falls back to legacy page-refresh polling if WebSocket fails.
+        Set env GROK_NO_WSS=1 to force legacy polling (useful for debugging
+        OTP delivery issues — rules out WebSocket layer).
         """
         if not target_email:
             print("  [otp] ERROR: No target_email")
             return None
 
         inbox_url = f"https://generator.email/{target_email}"
+
+        # Env override: skip WebSocket, go straight to legacy polling
+        if os.environ.get("GROK_NO_WSS"):
+            print(f"  [otp] GROK_NO_WSS=1 → legacy polling mode: {target_email}")
+            return self._legacy_poll_otp(timeout, poll_interval, target_email, inbox_url)
+
         print(f"  [otp] WebSocket mode: {target_email}")
 
         # Open inbox tab ONCE — no more full-page refreshes
