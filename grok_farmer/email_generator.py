@@ -235,12 +235,17 @@ class GeneratorEmailReader:
 
         inbox_url = f"https://generator.email/{target_email}"
 
-        # Env override: skip WebSocket, go straight to legacy polling
-        if os.environ.get("GROK_NO_WSS"):
-            print(f"  [otp] GROK_NO_WSS=1 → legacy polling mode: {target_email}")
+        # Default: legacy page-refresh polling (reliable).
+        # WSS mode is opt-in via GROK_USE_WSS=1 (WSS doesn't fire onmessage
+        # for incoming emails — confirmed broken via GROK_DUAL_OTP test).
+        if os.environ.get("GROK_USE_WSS") and not os.environ.get("GROK_NO_WSS"):
+            print(f"  [otp] GROK_USE_WSS=1 → WebSocket mode: {target_email}")
+        elif os.environ.get("GROK_DUAL_OTP"):
+            print(f"  [otp] GROK_DUAL_OTP=1 → dual mode (WSS + page refresh): {target_email}")
+            return self._dual_poll_otp(timeout, poll_interval, target_email, inbox_url)
+        else:
+            print(f"  [otp] Legacy polling mode: {target_email}")
             return self._legacy_poll_otp(timeout, poll_interval, target_email, inbox_url)
-
-        print(f"  [otp] WebSocket mode: {target_email}")
 
         # Open inbox tab ONCE — no more full-page refreshes
         tab = None
@@ -476,10 +481,141 @@ class GeneratorEmailReader:
 
         return None
 
+    def _dual_poll_otp(self, timeout, poll_interval, target_email, inbox_url):
+        """Diagnostic: run WSS + page refresh simultaneously, log which finds OTP first."""
+        print(f"  [otp] Dual mode: WSS + page refresh for {target_email}")
+
+        year_set = {"202020", "202120", "202220", "202320", "202420", "202520", "202620"}
+
+        # Tab A: WSS listener (stays on inbox page, no refresh)
+        tab_a = None
+        pre_codes = set()
+        try:
+            tab_a = self._browser.new_tab(inbox_url)
+            time.sleep(5)
+            pre_html = tab_a.html
+            pre_codes = set(re.findall(r"([A-Z0-9]{3}-[A-Z0-9]{3})", pre_html))
+            pre_codes.update(re.findall(r"([A-Z0-9]{6})", pre_html))
+            pre_codes -= year_set
+            print(f"  [otp-dual] Pre-existing: {len(pre_codes)} codes")
+        except Exception as e:
+            print(f"  [otp-dual] Tab A init error: {e}")
+
+        # Inject WSS on tab A
+        ws_ok = self._inject_websocket_listener(tab_a, target_email) if tab_a else False
+        print(f"  [otp-dual] WSS injected: {ws_ok}")
+
+        # Tab C: page-refresh polling
+        tab_c = None
+        try:
+            tab_c = self._browser.new_tab(inbox_url)
+            time.sleep(3)
+        except Exception as e:
+            print(f"  [otp-dual] Tab C init error: {e}")
+
+        start = time.time()
+        last_wss_count = 0
+        wss_found = None
+        page_found = None
+
+        while time.time() - start < timeout:
+            elapsed = int(time.time() - start)
+
+            # ── WSS check (tab A) ──
+            if tab_a and not wss_found:
+                try:
+                    ws_state = _run_js_safe(tab_a, "try { return window._otp_ws ? window._otp_ws.readyState : -1 } catch(e) { return -1 }", timeout_sec=3, default=-1)
+                    msgs_json = _run_js_safe(tab_a, "try { return JSON.stringify(window._otp_messages || []) } catch(e) { return '[]' }", timeout_sec=3, default='[]')
+                    messages = json.loads(msgs_json) if msgs_json else []
+                    wss_count = len(messages)
+
+                    if wss_count > last_wss_count:
+                        print(f"  [otp-dual] 🔵 WSS NEW MSG ({elapsed}s)! count={wss_count}")
+                        for msg in messages[last_wss_count:]:
+                            print(f"    WSS: {json.dumps(msg)[:300]}")
+                        last_wss_count = wss_count
+
+                        for msg in messages:
+                            combined = json.dumps(msg)
+                            code = extract_xai_code(combined)
+                            if code and code not in pre_codes:
+                                wss_found = code
+                                print(f"  [otp-dual] ✅ WSS FOUND OTP: {code} ({elapsed}s)")
+
+                    # Reconnect if closed
+                    if ws_state == 3 and elapsed > 0 and elapsed % 30 == 0:
+                        print(f"  [otp-dual] WSS closed, reconnecting...")
+                        self._inject_websocket_listener(tab_a, target_email)
+
+                except Exception as e:
+                    pass
+
+            # ── Page refresh check (tab C) ──
+            if tab_c and not page_found:
+                try:
+                    page_html = tab_c.html
+                    has_xai = any(kw in page_html.lower() for kw in ["xai", "spacexai", "x.ai", "confirmation", "verify"])
+
+                    if has_xai:
+                        items = tab_c.eles("css:a.list-group-item")
+                        for item in items:
+                            try:
+                                itxt = item.text if hasattr(item, "text") else ""
+                            except:
+                                continue
+                            if any(kw in itxt.lower() for kw in ["xai", "spacexai", "x.ai", "confirmation", "verify"]):
+                                print(f"  [otp-dual] 🟢 PAGE found xAI email ({elapsed}s): {itxt[:50]}")
+                                item.click()
+                                time.sleep(2)
+                                body = tab_c.html
+                                code = extract_xai_code(body)
+                                if code and code not in pre_codes:
+                                    page_found = code
+                                    print(f"  [otp-dual] ✅ PAGE FOUND OTP: {code} ({elapsed}s)")
+                                break
+
+                        if not page_found:
+                            code = extract_xai_code(page_html)
+                            if code and code not in pre_codes:
+                                page_found = code
+                                print(f"  [otp-dual] ✅ PAGE FOUND OTP (scan): {code} ({elapsed}s)")
+
+                except Exception:
+                    pass
+
+                # Refresh tab C
+                try:
+                    tab_c.get(inbox_url)
+                except:
+                    pass
+
+            # Status log every 15s
+            if elapsed > 0 and elapsed % 15 == 0:
+                ws_str = {0: "conn", 1: "online", 2: "closing", 3: "closed"}.get(ws_state if tab_a else -1, "?")
+                print(f"  [otp-dual] ...{elapsed}s | WSS: msgs={last_wss_count}, ws={ws_str}, otp={wss_found or '-'} | PAGE: otp={page_found or '-'}")
+
+            # Stop if either found
+            if wss_found:
+                print(f"  [otp-dual] 🏆 WSS wins! OTP={wss_found} at {elapsed}s")
+                self._safe_close_tab(tab_a)
+                self._safe_close_tab(tab_c)
+                return wss_found
+            if page_found:
+                print(f"  [otp-dual] 🏆 PAGE wins! OTP={page_found} at {elapsed}s")
+                self._safe_close_tab(tab_a)
+                self._safe_close_tab(tab_c)
+                return page_found
+
+            time.sleep(poll_interval)
+
+        self._safe_close_tab(tab_a)
+        self._safe_close_tab(tab_c)
+        print(f"  [otp-dual] TIMEOUT {timeout}s — WSS: {wss_found or 'none'}, PAGE: {page_found or 'none'}")
+        return wss_found or page_found
+
     def _legacy_poll_otp(self, timeout, poll_interval, target_email, inbox_url):
         """Legacy fallback: full-page refresh polling (high bandwidth)."""
         print(f"  [otp] Legacy polling: {inbox_url}")
-
         tab = None
         pre_codes = set()
         year_set = {"202020", "202120", "202220", "202320", "202420", "202520", "202620"}
