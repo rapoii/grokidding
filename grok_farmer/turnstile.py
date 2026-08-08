@@ -7,12 +7,13 @@ Also handles device code approval flow.
 """
 import os
 import time
+import threading
 from typing import Optional, Tuple
 
 
 class TurnstileSolver:
     def __init__(self, extension_path, max_retries: int = 15,
-                 timeout: int = 60, debug: bool = False):
+                 timeout: int = 60, debug: bool = False, anti_detect=None):
         # Accept either a config dict or extension path string
         if isinstance(extension_path, dict):
             cfg = extension_path
@@ -25,6 +26,7 @@ class TurnstileSolver:
         self.max_retries = max_retries
         self.timeout = timeout
         self.debug = debug
+        self._anti_detect = anti_detect  # AntiDetect instance (optional)
 
         self._browser = None
         self._proxy = None
@@ -35,44 +37,75 @@ class TurnstileSolver:
         self._proxy = proxy_url
 
     def _launch_browser(self):
-        """Launch Chrome with turnstile extension and optional proxy."""
+        """Launch Chrome with turnstile extension and optional proxy.
+
+        Retries once on BrowserConnectError after killing lingering Chrome.
+        """
         try:
             from DrissionPage import ChromiumPage, ChromiumOptions
         except ImportError:
             raise ImportError("DrissionPage required. Install: pip install DrissionPage")
 
-        opts = ChromiumOptions()
-        opts.add_extension(self.extension_path)
-        opts.set_argument("--disable-blink-features=AutomationControlled")
-        opts.set_argument("--no-first-run")
-        opts.set_argument("--no-default-browser-check")
+        # Pre-cleanup: always kill stale Chrome on debug port before launching
+        self._kill_chrome_on_port(9222)
+        time.sleep(3)  # Extra wait for port to fully release on Windows
 
+        for attempt in range(3):
+            opts = ChromiumOptions()
+            opts.add_extension(self.extension_path)
 
-
-        # Proxy support — SOCKS5 with auth needs local forwarder, others direct
-        if self._proxy:
-            from .proxy import needs_forwarder
-            if needs_forwarder(self._proxy):
-                # SOCKS5 with auth — use local forwarder (Chrome limitation)
-                import re as _re
-                m = _re.match(r"socks5://([^:]+):([^@]+)@([^:]+):(\d+)", self._proxy)
-                if m:
-                    user, pwd, host, port = m.group(1), m.group(2), m.group(3), int(m.group(4))
-                    local_port = self._start_socks5_forwarder(host, port, user, pwd)
-                    if local_port:
-                        opts.set_argument(f"--proxy-server=socks5://127.0.0.1:{local_port}")
-                        if self.debug:
-                            print(f"  [turnstile] SOCKS5 proxy via local forwarder: 127.0.0.1:{local_port}")
+            # Anti-detection: use comprehensive args if available, else minimal
+            if self._anti_detect:
+                for arg in self._anti_detect.get_chrome_args():
+                    opts.set_argument(arg)
             else:
-                # HTTP/HTTPS/SOCKS4/SOCKS5-no-auth — pass directly to Chrome
-                opts.set_argument(f"--proxy-server={self._proxy}")
-                if self.debug:
-                    print(f"  [turnstile] Proxy direct: {self._proxy}")
+                opts.set_argument("--disable-blink-features=AutomationControlled")
+                opts.set_argument("--no-first-run")
+                opts.set_argument("--no-default-browser-check")
 
-        self._browser = ChromiumPage(opts)
-        if self.debug:
-            print("  [turnstile] Browser launched with turnstile extension")
-        return self._browser
+            # Proxy support — SOCKS5 with auth needs local forwarder, others direct
+            if self._proxy:
+                from .proxy import needs_forwarder
+                if needs_forwarder(self._proxy):
+                    import re as _re
+                    m = _re.match(r"socks5://([^:]+):([^@]+)@([^:]+):(\d+)", self._proxy)
+                    if m:
+                        user, pwd, host, port = m.group(1), m.group(2), m.group(3), int(m.group(4))
+                        local_port = self._start_socks5_forwarder(host, port, user, pwd)
+                        if local_port:
+                            opts.set_argument(f"--proxy-server=socks5://127.0.0.1:{local_port}")
+                            if self.debug:
+                                print(f"  [turnstile] SOCKS5 proxy via local forwarder: 127.0.0.1:{local_port}")
+                else:
+                    opts.set_argument(f"--proxy-server={self._proxy}")
+                    if self.debug:
+                        print(f"  [turnstile] Proxy direct: {self._proxy}")
+
+            try:
+                self._browser = ChromiumPage(opts)
+
+                # Apply anti-detection CDP settings (timezone, locale, UA, viewport)
+                if self._anti_detect:
+                    self._anti_detect.apply_to_browser(self._browser)
+
+                # Apply CDP-level ad blocking (saves ~400KB per page load)
+                from .email_generator import apply_ad_blocking
+                apply_ad_blocking(self._browser)
+
+                if self.debug:
+                    print("  [turnstile] Browser launched with turnstile extension + ad blocking")
+                return self._browser
+            except Exception as e:
+                err_str = str(e)
+                if "BrowserConnectError" in err_str or "browser connection fails" in err_str.lower():
+                    if self.debug:
+                        print(f"  [turnstile] Port conflict (attempt {attempt+1}/2), killing Chrome...")
+                    self._kill_chrome_on_port(9222)
+                    time.sleep(2)
+                    continue  # retry
+                raise  # other errors: re-raise
+
+        raise RuntimeError("Failed to launch browser after port cleanup retry")
 
     def _start_socks5_forwarder(self, remote_host, remote_port, user, pwd) -> Optional[int]:
         """Start local SOCKS5 forwarder. Chrome → no-auth → forwarder → auth → remote."""
@@ -174,6 +207,11 @@ class TurnstileSolver:
             page.get(url)
             time.sleep(3)
 
+        # Inject anti-detection fingerprint BEFORE Turnstile detection
+        if self._anti_detect:
+            self._anti_detect.inject_fingerprint(page)
+            time.sleep(0.5)
+
         # Try turnstile.reset() first
         try:
             page.run_js("try { turnstile.reset() } catch(e) { }")
@@ -206,27 +244,80 @@ class TurnstileSolver:
 
                 # Shadow DOM traversal
                 challenge_wrapper = challenge_solution.parent()
-                challenge_iframe = challenge_wrapper.shadow_root.ele("tag:iframe")
+                shadow = challenge_wrapper.shadow_root
+                
+                # Wait for iframe to be ready (DrissionPage ChromiumFrame needs time)
+                # Wrapped in thread-timeout because ChromiumFrame.ele() can hang in CDP layer
+                challenge_iframe = None
+                for iframe_wait in range(5):
+                    try:
+                        def _get_iframe():
+                            f = shadow.ele("tag:iframe", timeout=3)
+                            if f:
+                                _ = f._target_id  # Probe: confirms CDP attached
+                            return f
+                        challenge_iframe = self._run_with_timeout(_get_iframe, timeout_sec=8, default=None)
+                        if challenge_iframe:
+                            break
+                    except Exception:
+                        challenge_iframe = None
+                    time.sleep(1)
+                
+                if not challenge_iframe:
+                    if self.debug:
+                        print(f"  [turnstile] Iframe not ready/hung (attempt {attempt+1}), retrying...")
+                    time.sleep(2)
+                    continue
 
                 if self.debug and attempt == 0:
                     print(f"  [turnstile] Found iframe in shadow DOM!")
 
-                # Inject JS patch into iframe
-                challenge_iframe.run_js(
-                    "window.dtp = 1;"
-                    "function getRandomInt(min, max) {"
-                    "  return Math.floor(Math.random() * (max - min + 1)) + min;"
-                    "}"
-                    "let screenX = getRandomInt(800, 1200);"
-                    "let screenY = getRandomInt(400, 600);"
-                    "Object.defineProperty(MouseEvent.prototype, 'screenX', { value: screenX });"
-                    "Object.defineProperty(MouseEvent.prototype, 'screenY', { value: screenY });"
-                )
+                # Inject JS patch into iframe (wrapped for DrissionPage quirks)
+                try:
+                    challenge_iframe.run_js(
+                        "window.dtp = 1;"
+                        "function getRandomInt(min, max) {"
+                        "  return Math.floor(Math.random() * (max - min + 1)) + min;"
+                        "}"
+                        "let screenX = getRandomInt(800, 1200);"
+                        "let screenY = getRandomInt(400, 600);"
+                        "Object.defineProperty(MouseEvent.prototype, 'screenX', { value: screenX });"
+                        "Object.defineProperty(MouseEvent.prototype, 'screenY', { value: screenY });"
+                    )
+                except AttributeError:
+                    # DrissionPage ChromiumFrame _frame_id bug — skip JS injection, just click
+                    if self.debug:
+                        print(f"  [turnstile] JS injection skipped (frame bug), trying click directly...")
 
-                # Click checkbox in shadow DOM
-                challenge_iframe_body = challenge_iframe.ele("tag:body").shadow_root
-                challenge_button = challenge_iframe_body.ele("tag:input")
-                challenge_button.click()
+                # Click checkbox in shadow DOM (wrapped in timeout — can hang in CDP)
+                try:
+                    def _click_checkbox():
+                        body = challenge_iframe.ele("tag:body").shadow_root
+                        btn = body.ele("tag:input")
+                        btn.click()
+                        return True
+                    clicked = self._run_with_timeout(_click_checkbox, timeout_sec=12, default=False)
+                    if not clicked:
+                        raise AttributeError("timeout")
+                except (AttributeError, Exception):
+                    # Fallback: try clicking via page JS
+                    if self.debug:
+                        print(f"  [turnstile] Direct click failed, trying JS click fallback...")
+                    try:
+                        page.run_js("""
+                            var iframes = document.querySelectorAll('iframe');
+                            for (var i = 0; i < iframes.length; i++) {
+                                try {
+                                    var doc = iframes[i].contentDocument;
+                                    if (doc) {
+                                        var inputs = doc.querySelectorAll('input[type=checkbox]');
+                                        if (inputs.length > 0) { inputs[0].click(); break; }
+                                    }
+                                } catch(e) {}
+                            }
+                        """)
+                    except Exception:
+                        pass
 
                 if self.debug:
                     print(f"  [turnstile] Clicked checkbox (attempt {attempt+1})")
@@ -390,10 +481,67 @@ class TurnstileSolver:
         return False
 
     def close(self):
-        """Close browser."""
+        """Close browser and force-kill lingering Chrome on debug port."""
         try:
             if self._browser:
                 self._browser.quit()
         except Exception:
             pass
         self._browser = None
+        # Aggressive cleanup: kill + wait + verify
+        self._kill_chrome_on_port(9222)
+        time.sleep(1)
+        # Double-check port is free
+        self._kill_chrome_on_port(9222)
+        time.sleep(2)
+
+    @staticmethod
+    def _run_with_timeout(func, timeout_sec=10, default=None):
+        """Run func() in a thread with hard timeout. Returns default on timeout.
+        
+        DrissionPage's ChromiumFrame.ele() can hang indefinitely in CDP layer.
+        This wrapper prevents the entire farmer from freezing.
+        """
+        result = [default]
+        error = [None]
+
+        def _worker():
+            try:
+                result[0] = func()
+            except Exception as e:
+                error[0] = e
+
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+        t.join(timeout=timeout_sec)
+        if t.is_alive():
+            # Thread still running = hung. We can't kill it, but we can move on.
+            return default
+        if error[0] is not None:
+            raise error[0]
+        return result[0]
+
+    @staticmethod
+    def _kill_chrome_on_port(port: int):
+        """Kill Chrome processes listening on the given debug port."""
+        import subprocess
+        try:
+            # Find PIDs listening on port via netstat
+            proc = subprocess.run(
+                ["cmd", "/c", f"netstat -ano | findstr :{port} | findstr LISTENING"],
+                capture_output=True, text=True, timeout=5
+            )
+            pids = set()
+            for line in (proc.stdout or "").strip().splitlines():
+                parts = line.split()
+                if parts and parts[-1].isdigit():
+                    pids.add(parts[-1])
+            for pid in pids:
+                subprocess.run(
+                    ["cmd", "/c", f"taskkill /F /PID {pid}"],
+                    capture_output=True, timeout=5
+                )
+            if pids:
+                time.sleep(2)  # Let port fully release
+        except Exception:
+            pass

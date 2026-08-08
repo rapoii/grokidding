@@ -38,6 +38,7 @@ from .oauth import OAuthClient
 from .proxy import ProxyRotator
 from .router_push import RouterPusher
 from .turnstile import TurnstileSolver
+from .anti_detect import AntiDetect
 from .utils import generate_email, generate_password, generate_name, save_account, log_event
 
 SIGNUP_URL = "https://accounts.x.ai/sign-up?redirect=grok-com&return_to=%2F"
@@ -546,67 +547,126 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
         # ═══════════════════════════════════════
         print(f"  [9/10] Clicking 'Complete sign up'...")
         redirected = False
-        for ts_attempt in range(3):
-            # Wait for Turnstile auto-solve (extension patches MouseEvent)
-            # The turnstile_patch extension handles this automatically
-            for _ts_wait in range(30):
-                ts_val = page.run_js(
-                    "try { return document.querySelector('input[name=cf-turnstile-response]')?.value || '' }"
-                    " catch(e) { return '' }"
-                )
-                if ts_val and len(ts_val) > 10:
-                    print(f"    [9] Turnstile auto-solved!")
-                    break
-                time.sleep(1)
-            else:
-                # Manual solve fallback
+        MAX_TS_RESETS = 3  # How many times to reset + re-solve Turnstile
+        MAX_CLICK_ATTEMPTS = 4  # Click attempts per Turnstile cycle
+
+        for ts_cycle in range(MAX_TS_RESETS):
+            # ── Phase 1: Wait for auto-solve (extension handles it) ──
+            auto_solved = False
+            for _ts_wait in range(15):  # 15 seconds wait
                 try:
-                    ts_el = page.ele("@name=cf-turnstile-response", timeout=2)
-                    if ts_el:
-                        print(f"    [9] Turnstile not auto-solved, trying manual...")
-                        solver.solve_turnstile()
-                        time.sleep(2)
+                    ts_val = page.run_js(
+                        "try { return document.querySelector('input[name=cf-turnstile-response]')?.value || '' }"
+                        " catch(e) { return '' }"
+                    )
+                    if ts_val and len(ts_val) > 10:
+                        print(f"    [9] Turnstile auto-solved! (cycle {ts_cycle+1})")
+                        auto_solved = True
+                        break
+                except Exception:
+                    pass
+                time.sleep(1)
+
+            # ── Phase 2: If not auto-solved, reset + manual solve ──
+            if not auto_solved:
+                print(f"    [9] Auto-solve timeout, resetting Turnstile (cycle {ts_cycle+1}/{MAX_TS_RESETS})...")
+
+                # Reset Turnstile widget — force re-render
+                try:
+                    page.run_js(
+                        "try { turnstile.reset() } catch(e) { "
+                        "  try { document.querySelector('.cf-turnstile')?.remove() } catch(e2) {} "
+                        "}"
+                    )
+                except Exception:
+                    pass
+                time.sleep(2)
+
+                # Try manual solve via shadow DOM approach
+                try:
+                    result_token = solver.solve_turnstile()
+                    if result_token and result_token[0]:
+                        print(f"    [9] Manual solve SUCCESS (cycle {ts_cycle+1})!")
+                        auto_solved = True
+                    else:
+                        print(f"    [9] Manual solve did not return token (cycle {ts_cycle+1})")
+                except Exception as solve_err:
+                    print(f"    [9] Manual solve error: {solve_err}")
+
+                # Wait a bit after solve attempt for token to propagate
+                time.sleep(3)
+
+                # Double-check: is token there now?
+                if not auto_solved:
+                    try:
+                        ts_val2 = page.run_js(
+                            "try { return document.querySelector('input[name=cf-turnstile-response]')?.value || '' }"
+                            " catch(e) { return '' }"
+                        )
+                        if ts_val2 and len(ts_val2) > 10:
+                            print(f"    [9] Token appeared after manual solve!")
+                            auto_solved = True
+                    except Exception:
+                        pass
+
+            # ── Phase 3: Click "Complete sign up" ──
+            for click_attempt in range(MAX_CLICK_ATTEMPTS):
+                clicked = click_button_js(page, "Complete sign up", label=f"9-c{ts_cycle}-a{click_attempt}")
+                if not clicked:
+                    submit_form_js(page, "input[type=password]", label=f"9-fb-c{ts_cycle}")
+                time.sleep(8)
+                st = page_state(page, f"9-c{ts_cycle}-a{click_attempt}")
+
+                # Check for common errors on the page
+                try:
+                    page_text = page.run_js("return document.body?.innerText || ''")
+                    for err in ['too weak', 'already registered', 'invalid', 'try again', 'failed', 'blocked']:
+                        if err.lower() in (page_text or '').lower():
+                            print(f"    [9] PAGE ERROR: '{err}' detected!")
+                            result["error"] = f"Page error: {err}"
                 except Exception:
                     pass
 
-            clicked = click_button_js(page, "Complete sign up", label=f"9-{ts_attempt}")
-            if not clicked:
-                submit_form_js(page, "input[type=password]", label=f"9-fb-{ts_attempt}")
-            time.sleep(8)
-            st = page_state(page, f"9-{ts_attempt}")
+                try:
+                    current_url = page.url
+                except Exception as nav_err:
+                    if "disconnected" in str(nav_err).lower():
+                        print(f"    [9] Page disconnected — likely redirected to grok.com")
+                        redirected = True
+                        break
+                    raise
 
-            # Check for common errors on the page
-            try:
-                page_text = page.run_js("return document.body?.innerText || ''")
-                for err in ['too weak', 'already registered', 'invalid', 'try again', 'failed', 'blocked']:
-                    if err.lower() in (page_text or '').lower():
-                        print(f"    [9] PAGE ERROR: '{err}' detected!")
-                        result["error"] = f"Page error: {err}"
-            except Exception:
-                pass
-
-            try:
-                current_url = page.url
-            except Exception as nav_err:
-                if "disconnected" in str(nav_err).lower():
-                    print(f"    [9] Page disconnected — likely redirected to grok.com")
+                if "grok.com" in current_url:
                     redirected = True
                     break
-                raise
 
-            if "grok.com" in current_url:
-                redirected = True
+                # If redirected to Cloudflare or other non-xAI page, go back
+                if "accounts.x.ai" not in current_url:
+                    print(f"    [9] Redirected to {current_url[:60]}, going back...")
+                    page.get(SIGNUP_URL)
+                    time.sleep(3)
+                    h1_now = page.ele("tag:h1", timeout=2)
+                    if h1_now and "complete" in (h1_now.text or "").lower():
+                        break  # break inner loop to reset turnstile in outer loop
+                    else:
+                        redirected = False
+                        break
+
+            if redirected:
                 break
 
-            # If redirected to Cloudflare or other non-xAI page, go back
-            if "accounts.x.ai" not in current_url:
-                print(f"    [9] Redirected to {current_url[:60]}, going back...")
+            # Not redirected yet — reload profile page and try again with fresh Turnstile
+            if ts_cycle < MAX_TS_RESETS - 1:
+                print(f"    [9] Still on profile page, reloading for fresh Turnstile...")
                 page.get(SIGNUP_URL)
                 time.sleep(3)
-                h1_now = page.ele("tag:h1", timeout=2)
-                if h1_now and "complete" in (h1_now.text or "").lower():
-                    continue
-                else:
+                # Check if still on complete sign up page
+                try:
+                    h1_now = page.ele("tag:h1", timeout=3)
+                    if not h1_now or "complete" not in (h1_now.text or "").lower():
+                        print(f"    [9] Not on profile page anymore (h1: {h1_now.text if h1_now else 'None'}), stopping retry")
+                        break
+                except Exception:
                     break
 
         try:
@@ -802,47 +862,33 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
         # STEP 11: Push to 9Router
         # ═══════════════════════════════════════
         print(f"\n [11/11] Pushing to 9Router...")
-        push_result = pusher.push_via_api(access_token)
+        push_result = pusher.push_via_api(
+            access_token,
+            refresh_token=refresh_token,
+            expires_in=token_result.get("expires_in", 21600),
+            email=email,
+        )
         print(f" [11-api] {push_result}")
 
-        push_sql = pusher.push_via_sqlite(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            email=email,
-            display_name=f"{first_name} {last_name}",
-            expires_in=token_result.get("expires_in", 21600),
-            scope=token_result.get("scope", ""),
-            id_token=token_result.get("id_token", ""),
-        )
-        print(f" [11-sql] {push_sql}")
+        # SQLite push only as fallback if API push fails
+        api_ok = push_result.get("ok") or push_result.get("success")
+        push_sql = {"ok": False, "skipped": True}
+        if not api_ok and pusher.db_path:
+            print(f" [11-api] API push failed, trying SQLite fallback...")
+            push_sql = pusher.push_via_sqlite(
+                access_token=access_token,
+                refresh_token=refresh_token,
+                email=email,
+                display_name=f"{first_name} {last_name}",
+                expires_in=token_result.get("expires_in", 21600),
+                scope=token_result.get("scope", ""),
+                id_token=token_result.get("id_token", ""),
+            )
+            print(f" [11-sql] {push_sql}")
 
-        if push_result.get("ok") or push_sql.get("ok"):
-            result["success"] = True
-            result["steps"]["11_push"] = {"api": push_result, "sql": push_sql}
-            print(f"\n ✅ SUCCESS: {email} -> 9Router!")
-            log_event(ocfg["logs_dir"], "SUCCESS", {"email": email, "at_len": len(access_token)})
-        else:
-            result["error"] = f"Push failed: {push_result} / {push_sql}"
-
-        # ═══════════════════════════════════════
-        # STEP 11: Push to 9Router
-        # ═══════════════════════════════════════
-        print(f"\n [11/11] Pushing to 9Router...")
-        push_result = pusher.push_via_api(access_token)
-        print(f" [11-api] {push_result}")
-
-        push_sql = pusher.push_via_sqlite(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            email=email,
-            display_name=f"{first_name} {last_name}",
-            expires_in=token_result.get("expires_in", 21600),
-            scope=token_result.get("scope", ""),
-            id_token=token_result.get("id_token", ""),
-        )
-        print(f" [11-sql] {push_sql}")
-
-        if push_result.get("ok") or push_sql.get("ok"):
+        # Accept both "ok" and "success" keys from push result
+        sql_ok = push_sql.get("ok") or push_sql.get("success")
+        if api_ok or sql_ok:
             result["success"] = True
             result["steps"]["11_push"] = {"api": push_result, "sql": push_sql}
             print(f"\n ✅ SUCCESS: {email} -> 9Router!")
@@ -898,17 +944,22 @@ def cmd_run(args):
     print(f"  [OK] 9Router logged in")
 
     tcfg = cfg["turnstile"]
-    solver = TurnstileSolver(
-        extension_path=tcfg.get("extension_path", "turnstile_patch/"),
-        max_retries=tcfg.get("max_retries", 15),
-        timeout=tcfg.get("timeout", 60), debug=True,
-    )
+    solver = None
 
     results = []
     for i in range(args.count):
         print(f"\n{'='*60}")
         print(f"  Account {i+1}/{args.count}")
         print(f"{'='*60}")
+
+        # New fingerprint + solver per account
+        anti_detect = AntiDetect(debug=True)
+        solver = TurnstileSolver(
+            extension_path=tcfg.get("extension_path", "turnstile_patch/"),
+            max_retries=tcfg.get("max_retries", 15),
+            timeout=tcfg.get("timeout", 60), debug=True,
+            anti_detect=anti_detect,
+        )
 
         # For generator.email mode, create reader from browser
         current_reader = email_reader

@@ -24,7 +24,11 @@ class RouterPusher:
 
     def _init_transport(self):
         from curl_cffi import requests as curl_requests
-        self._session = curl_requests.Session(impersonate="chrome131")
+        # Don't use TLS impersonation for localhost — causes "empty reply"
+        if "localhost" in self.base_url or "127.0.0.1" in self.base_url:
+            self._session = curl_requests.Session()
+        else:
+            self._session = curl_requests.Session(impersonate="chrome131")
 
     def login(self, retries=3) -> bool:
         """Login to 9Router dashboard and get auth cookie. Retries on DNS errors."""
@@ -54,11 +58,13 @@ class RouterPusher:
                     time.sleep(2 * (attempt + 1))
         return False
 
-    def push_via_api(self, access_token: str) -> dict:
+    def push_via_api(self, access_token: str, refresh_token: str = "",
+                     expires_in: int = 21600, email: str = "") -> dict:
         """Push token via API exchange endpoint.
 
         The exchange endpoint accepts JWT access tokens directly
         and creates a new connection automatically.
+        After API push, stores refresh_token and expiresAt in SQLite.
         """
         if not self._cookie:
             if not self.login():
@@ -81,19 +87,52 @@ class RouterPusher:
         if self.debug:
             print(f"  [push_api] status={resp.status_code}, success={result.get('success')}")
 
-        # Fix authType: 9Router API sets 'access_token' but frontend expects 'oauth'
+        # Fix authType + store refresh_token + expiresAt in SQLite
         if result.get('success') and self.db_path:
             try:
+                from datetime import datetime, timezone
                 db = sqlite3.connect(self.db_path)
+
+                # Fix authType
                 db.execute(
                     "UPDATE providerConnections SET authType = 'oauth' WHERE provider = 'grok-cli' AND authType = 'access_token'"
                 )
+
+                # Store refresh_token and expiresAt in the latest connection's data
+                if refresh_token:
+                    now = datetime.now(timezone.utc)
+                    expires_at = datetime.fromtimestamp(
+                        now.timestamp() + expires_in, tz=timezone.utc
+                    ).isoformat().replace("+00:00", "Z")
+
+                    # Find the most recently created grok-cli connection
+                    row = db.execute(
+                        "SELECT id, data FROM providerConnections WHERE provider = 'grok-cli' ORDER BY createdAt DESC LIMIT 1"
+                    ).fetchone()
+                    if row:
+                        conn_id, data_str = row
+                        data = json.loads(data_str) if data_str else {}
+                        data["refreshToken"] = refresh_token
+                        data["expiresAt"] = expires_at
+                        data["expiresIn"] = expires_in
+                        if email and "providerSpecificData" in data:
+                            data["providerSpecificData"]["email"] = email
+                        elif email:
+                            data["providerSpecificData"] = {"email": email}
+                        db.execute(
+                            "UPDATE providerConnections SET data = ?, updatedAt = ? WHERE id = ?",
+                            (json.dumps(data), now.isoformat(), conn_id)
+                        )
+                        if self.debug:
+                            print(f"  [push_api] Stored refreshToken + expiresAt for {conn_id[:12]}...")
+
                 db.commit()
                 db.close()
                 if self.debug:
                     print("  [push_api] Fixed authType to 'oauth'")
-            except Exception:
-                pass
+            except Exception as e:
+                if self.debug:
+                    print(f"  [push_api] SQLite update error: {e}")
 
         return result
 
