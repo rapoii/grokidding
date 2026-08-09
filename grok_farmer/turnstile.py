@@ -13,7 +13,8 @@ from typing import Optional, Tuple
 
 class TurnstileSolver:
     def __init__(self, extension_path, max_retries: int = 15,
-                 timeout: int = 60, debug: bool = False, anti_detect=None):
+                 timeout: int = 60, debug: bool = False, anti_detect=None,
+                 debug_port: int = 9222):
         # Accept either a config dict or extension path string
         if isinstance(extension_path, dict):
             cfg = extension_path
@@ -27,6 +28,7 @@ class TurnstileSolver:
         self.timeout = timeout
         self.debug = debug
         self._anti_detect = anti_detect  # AntiDetect instance (optional)
+        self.debug_port = debug_port  # Chrome remote debugging port
 
         self._browser = None
         self._proxy = None
@@ -47,12 +49,13 @@ class TurnstileSolver:
             raise ImportError("DrissionPage required. Install: pip install DrissionPage")
 
         # Pre-cleanup: always kill stale Chrome on debug port before launching
-        self._kill_chrome_on_port(9222)
+        self._kill_chrome_on_port(self.debug_port)
         time.sleep(3)  # Extra wait for port to fully release on Windows
 
         for attempt in range(3):
             opts = ChromiumOptions()
             opts.add_extension(self.extension_path)
+            opts.set_local_port(self.debug_port)  # Unique port per worker
 
             # Anti-detection: use comprehensive args if available, else minimal
             if self._anti_detect:
@@ -100,7 +103,7 @@ class TurnstileSolver:
                 if "BrowserConnectError" in err_str or "browser connection fails" in err_str.lower():
                     if self.debug:
                         print(f"  [turnstile] Port conflict (attempt {attempt+1}/2), killing Chrome...")
-                    self._kill_chrome_on_port(9222)
+                    self._kill_chrome_on_port(self.debug_port)
                     time.sleep(2)
                     continue  # retry
                 raise  # other errors: re-raise
@@ -489,10 +492,10 @@ class TurnstileSolver:
             pass
         self._browser = None
         # Aggressive cleanup: kill + wait + verify
-        self._kill_chrome_on_port(9222)
+        self._kill_chrome_on_port(self.debug_port)
         time.sleep(1)
         # Double-check port is free
-        self._kill_chrome_on_port(9222)
+        self._kill_chrome_on_port(self.debug_port)
         time.sleep(2)
 
     @staticmethod

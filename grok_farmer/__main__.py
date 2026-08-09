@@ -196,13 +196,17 @@ def dismiss_cookies(page):
 # MAIN FLOW
 # ─────────────────────────────────────────────
 
-def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run=False, email_mode='imap', used_domains=None):
+def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run=False, email_mode='imap', used_domains=None, pre_assigned_email=None):
     ecfg = cfg["email"]
     scfg = cfg["signup"]
     ocfg = cfg["output"]
 
     # For IMAP mode, generate email now. For generator mode, generate after browser launch.
-    if email_mode == 'generator':
+    if pre_assigned_email:
+        # Parallel mode: email already pre-assigned by _parallel_worker
+        email = pre_assigned_email
+        user_part, domain_part = email.split("@", 1)
+    elif email_mode == 'generator':
         email = None  # will be generated after browser launch
         user_part, domain_part = "", ""
     else:
@@ -259,7 +263,9 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
 
         # Generate email from browser + create reader (generator mode)
         if email_mode == "generator":
-            email = generate_email_from_browser(solver._browser, used_domains=used_domains)
+            if not pre_assigned_email:
+                # Sequential mode: generate fresh email
+                email = generate_email_from_browser(solver._browser, used_domains=used_domains)
             user_part, domain_part = email.split("@", 1)
             result["email"] = email
             print(f"  [INIT] Generated email: {email}")
@@ -908,6 +914,169 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
     return result
 
 
+def _parallel_worker(worker_id, cfg, tcfg, pusher_cfg, email_assignment, dry_run=False):
+    """Single parallel worker — runs in its own thread with its own browser.
+
+    Args:
+        worker_id: int identifier (0-4)
+        cfg: config dict
+        tcfg: turnstile config dict
+        pusher_cfg: (base_url, password, db_path) tuple — can't pickle RouterPusher
+        email_assignment: (username, domain) tuple — pre-assigned by pre_collect
+        dry_run: dry run mode
+    """
+    import threading
+    from .turnstile import TurnstileSolver
+    from .anti_detect import AntiDetect
+    from .email_generator import GeneratorEmailReader, use_email_in_browser
+    from .router_push import RouterPusher
+    from .proxy import ProxyRotator
+
+    username, domain = email_assignment
+    email = f"{username}@{domain}"
+    port = 9222 + worker_id  # Unique Chrome debug port per worker
+
+    # Each worker gets its own anti-detect profile
+    anti_detect = AntiDetect(debug=True)
+    solver = TurnstileSolver(
+        extension_path=tcfg.get("extension_path", "turnstile_patch/"),
+        max_retries=tcfg.get("max_retries", 15),
+        timeout=tcfg.get("timeout", 60), debug=True,
+        anti_detect=anti_detect,
+        debug_port=port,
+    )
+
+    # Each worker gets its own pusher (can't share across threads safely)
+    base_url, password, db_path = pusher_cfg
+    pusher = RouterPusher(base_url, password, db_path, debug=True)
+    pusher.login()
+
+    proxy_rotator = ProxyRotator(
+        pool=[],  # no proxy in parallel mode for now
+        mode="socks5",
+    )
+
+    # Use pre-assigned email
+    if not solver._browser:
+        solver._launch_browser()
+
+    # Set the pre-assigned email in generator.email
+    use_email_in_browser(solver._browser, username, domain)
+
+    # Create reader from this browser
+    current_reader = GeneratorEmailReader(solver._browser)
+
+    try:
+        result = run_single_account(
+            cfg, solver, proxy_rotator, current_reader, pusher,
+            dry_run, email_mode="generator",
+            used_domains=None,  # domains already pre-assigned
+            pre_assigned_email=email,
+        )
+        s = "SUCCESS" if result.get("success") else f"FAIL: {result.get('error', '?')[:80]}"
+        print(f"\n  [W{worker_id}] RESULT: {s}")
+        return result
+    except Exception as e:
+        print(f"  [W{worker_id}] FATAL: {e}")
+        return {"error": str(e), "success": False}
+    finally:
+        solver.close()
+
+
+def _run_parallel(cfg, args, tcfg, pusher, proxy_rotator):
+    """Run farming in parallel with randomized batch sizes.
+
+    Flow:
+    1. Pre-collect all needed domains (sequential, ~30s)
+    2. Loop: random batch size 1-min(5, remaining), spawn parallel workers
+    3. Wait for batch to finish, collect results
+    4. Repeat until target count reached
+    """
+    import random
+    import threading
+    from .email_generator import pre_collect_domains
+    from .turnstile import TurnstileSolver
+    from .anti_detect import AntiDetect
+
+    target = args.count
+    max_batch = 5
+    pusher_cfg = (cfg["ninrouter"]["base_url"], cfg["ninrouter"]["password"],
+                  cfg["ninrouter"].get("db_path"))
+
+    # ── Phase 1: Pre-collect all domains ──
+    print(f"\n{'='*60}")
+    print(f"  PHASE 1: Pre-collecting {target} unique domains")
+    print(f"{'='*60}")
+
+    # Use a temporary browser to pre-collect domains
+    pre_browser = TurnstileSolver(
+        extension_path=tcfg.get("extension_path", "turnstile_patch/"),
+        max_retries=tcfg.get("max_retries", 15),
+        timeout=tcfg.get("timeout", 60), debug=True,
+        anti_detect=AntiDetect(debug=True),
+        debug_port=9222,
+    )
+    pre_browser._launch_browser()
+    all_assignments = pre_collect_domains(pre_browser._browser, target)
+    pre_browser.close()
+    print(f"  [precollect] Got {len(all_assignments)} domains")
+
+    if not all_assignments:
+        print("  [ERROR] No domains collected. Aborting.")
+        return 1
+
+    # ── Phase 2: Parallel batches with random sizes ──
+    all_results = []
+    processed = 0
+
+    while processed < len(all_assignments):
+        remaining = len(all_assignments) - processed
+        # Random batch size: 1 to min(max_batch, remaining)
+        batch_size = random.randint(1, min(max_batch, remaining))
+        batch = all_assignments[processed:processed + batch_size]
+
+        print(f"\n{'='*60}")
+        print(f"  BATCH: {batch_size} workers (remaining: {remaining})")
+        print(f"{'='*60}")
+        for i, (u, d) in enumerate(batch):
+            print(f"  [W{i}] {u}@{d}")
+
+        # Spawn threads
+        threads = []
+        results_lock = threading.Lock()
+        batch_results = []
+
+        def _worker_wrapper(wid, assignment):
+            r = _parallel_worker(wid, cfg, tcfg, pusher_cfg, assignment, args.dry_run)
+            with results_lock:
+                batch_results.append(r)
+
+        for i, assignment in enumerate(batch):
+            t = threading.Thread(target=_worker_wrapper, args=(i, assignment))
+            threads.append(t)
+            t.start()
+
+        # Wait for all threads in this batch
+        for t in threads:
+            t.join()
+
+        all_results.extend(batch_results)
+        processed += batch_size
+        print(f"\n  Batch done. {sum(1 for r in batch_results if r.get('success'))}/{batch_size} success")
+
+        # Small delay between batches
+        if processed < len(all_assignments):
+            delay = random.randint(3, 8)
+            print(f"  Waiting {delay}s before next batch...")
+            time.sleep(delay)
+
+    success = sum(1 for r in all_results if r.get("success"))
+    print(f"\n{'='*60}")
+    print(f"  DONE: {success}/{target} accounts created")
+    print(f"{'='*60}")
+    return 0 if success > 0 else 1
+
+
 def cmd_run(args):
     """Run the farming process (default subcommand)."""
     cfg = load_config(args.config)
@@ -919,6 +1088,8 @@ def cmd_run(args):
     print(f"  Target: {cfg['ninrouter']['base_url']}")
     print(f"  Email:  {email_mode}")
     print(f"  Count:  {args.count}")
+    if args.parallel:
+        print(f"  Mode:   PARALLEL (random batch 1-{min(args.count, 5)})")
     if args.dry_run:
         print(f"  Mode: DRY RUN")
     print("=" * 60)
@@ -947,10 +1118,14 @@ def cmd_run(args):
     print(f"  [OK] 9Router logged in")
 
     tcfg = cfg["turnstile"]
-    solver = None
 
+    if args.parallel and email_mode == "generator":
+        return _run_parallel(cfg, args, tcfg, pusher, proxy_rotator)
+
+    # ── Sequential mode (original) ──
     results = []
     used_domains = set()
+    solver = None
     for i in range(args.count):
         print(f"\n{'='*60}")
         print(f"  Account {i+1}/{args.count}")
@@ -1085,6 +1260,7 @@ def main():
     run_parser.add_argument("--config", type=str, help="Config file path")
     run_parser.add_argument("--dry-run", action="store_true", help="Generate credentials only")
     run_parser.add_argument("--no-proxy", action="store_true", help="Skip proxy rotation")
+    run_parser.add_argument("--parallel", action="store_true", help="Parallel mode: random batch 1-5 workers")
 
     # ── tui (default) ──
     tui_parser = subparsers.add_parser("tui", help="Start TUI dashboard (default)")

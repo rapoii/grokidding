@@ -281,6 +281,122 @@ def extract_xai_code(text: str) -> Optional[str]:
     return None
 
 
+def pre_collect_domains(browser, count: int, max_attempts: int = 30) -> list:
+    """Pre-collect N unique domains from generator.email using a single browser.
+
+    Opens generator.email, clicks "Generate new e-mail" repeatedly,
+    collecting unique domains until we have `count` or hit max_attempts.
+    Returns list of (username, domain) tuples.
+    """
+    UNSUPPORTED_DOMAINS = {"generator.email", "dharmadi.com"}
+    BLOCKED_DOMAIN_PATTERNS = ["gmail", "googlemail", "outlook", "hotmail", "yahoo",
+                               "getmails", "mailfirefly", "tempmail", "10minutemail"]
+
+    tab = browser.new_tab("https://generator.email")
+    # Wait for SPA to fully render
+    for _wait in range(20):
+        time.sleep(1)
+        if tab.ele("css:input[id='userName']", timeout=0.5):
+            break
+    else:
+        print("  [precollect] WARNING: inputs never appeared after 20s")
+
+    collected = {}  # domain -> username
+    for attempt in range(max_attempts):
+        if len(collected) >= count:
+            break
+
+        # Click "Generate new e-mail" to get a fresh email
+        try:
+            gen_btn = tab.ele("text:Generate new e-mail", timeout=3)
+            if gen_btn:
+                gen_btn.click()
+                time.sleep(2)
+        except Exception:
+            pass
+
+        # Read email from input fields
+        try:
+            email_input = tab.ele("css:input[id='userName']", timeout=2)
+            domain_input = tab.ele("css:input[id='domainName2']", timeout=2)
+            if email_input and domain_input:
+                user = email_input.attr("value") or ""
+                domain = domain_input.attr("value") or ""
+                domain_lower = domain.lower()
+                if not user or not domain:
+                    continue
+                if domain in UNSUPPORTED_DOMAINS:
+                    continue
+                if any(pat in domain_lower for pat in BLOCKED_DOMAIN_PATTERNS):
+                    continue
+                if domain in collected:
+                    continue
+                collected[domain] = user
+                print(f"  [precollect] {len(collected)}/{count}: {user}@{domain}")
+        except Exception:
+            pass
+
+    tab.close()
+
+    if len(collected) < count:
+        print(f"  [precollect] WARNING: only got {len(collected)}/{count} unique domains")
+
+    return [(u, d) for d, u in collected.items()]
+
+
+def use_email_in_browser(browser, username: str, domain: str) -> str:
+    """Open generator.email and set a specific email (username + domain) in the input fields.
+
+    Used by parallel workers to use a pre-assigned domain.
+    Returns the full email address.
+    """
+    email = f"{username}@{domain}"
+
+    tab = browser.new_tab("https://generator.email")
+    # Wait for SPA to fully render
+    for _wait in range(20):
+        time.sleep(1)
+        if tab.ele("css:input[id='userName']", timeout=0.5):
+            break
+    else:
+        print("  [email] WARNING: inputs never appeared after 20s")
+
+    # Type username into the userName field
+    try:
+        user_input = tab.ele("css:input[id='userName']", timeout=3)
+        if user_input:
+            user_input.clear()
+            user_input.input(username)
+            time.sleep(0.5)
+    except Exception as e:
+        print(f"  [email] Failed to set username: {e}")
+
+    # Type domain into the domainName2 field
+    try:
+        domain_input = tab.ele("css:input[id='domainName2']", timeout=3)
+        if domain_input:
+            domain_input.clear()
+            domain_input.input(domain)
+            time.sleep(0.5)
+    except Exception as e:
+        print(f"  [email] Failed to set domain: {e}")
+
+    # Trigger the site to register this email (calls clipboard_process in JS)
+    try:
+        tab.run_js(f"window.clipboard_process('{username}', '{domain}');")
+        time.sleep(2)
+    except Exception:
+        # Fallback: press Tab/Enter to trigger change
+        try:
+            domain_input.press("Enter") if domain_input else None
+        except Exception:
+            pass
+
+    print(f"  [email] Set email: {email}")
+    tab.close()
+    return email
+
+
 class GeneratorEmailReader:
     """Read OTP codes from generator.email via page-refresh polling.
 
