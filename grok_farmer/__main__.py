@@ -1065,11 +1065,12 @@ def _run_parallel(cfg, args, tcfg, pusher, proxy_rotator):
         processed += batch_size
         print(f"\n  Batch done. {sum(1 for r in batch_results if r.get('success'))}/{batch_size} success")
 
-        # Small delay between batches
+        # Cooldown between batches
         if processed < len(all_assignments):
-            delay = random.randint(3, 8)
-            print(f"  Waiting {delay}s before next batch...")
-            time.sleep(delay)
+            cd = getattr(args, 'cooldown', 5)
+            if cd > 0:
+                print(f"  Cooldown: {cd}s before next batch...")
+                time.sleep(cd)
 
     success = sum(1 for r in all_results if r.get("success"))
     print(f"\n{'='*60}")
@@ -1163,9 +1164,12 @@ def cmd_run(args):
 
         # Close browser between accounts to get fresh session
         if i < args.count - 1:
+            cd = getattr(args, 'cooldown', 5)
             print(f"\n  Closing browser for fresh session...")
             solver.close()
-            time.sleep(5)
+            if cd > 0:
+                print(f"  Cooldown: {cd}s...")
+                time.sleep(cd)
 
     success = sum(1 for r in results if r.get("success"))
     print(f"\n{'='*60}")
@@ -1262,6 +1266,7 @@ def main():
     run_parser.add_argument("--dry-run", action="store_true", help="Generate credentials only")
     run_parser.add_argument("--no-proxy", action="store_true", help="Skip proxy rotation")
     run_parser.add_argument("--parallel", action="store_true", help="Parallel mode: random batch 1-5 workers")
+    run_parser.add_argument("--cooldown", type=int, default=5, help="Cooldown seconds between accounts (sequential) or batches (parallel). 0 = no cooldown")
 
     # ── tui (default) ──
     tui_parser = subparsers.add_parser("tui", help="Start TUI dashboard (default)")

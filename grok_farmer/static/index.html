@@ -276,6 +276,9 @@ tbody td{padding:12px 22px;font-size:.85rem}
   <div class="controls">
     <span class="input-label">Count:</span>
     <input type="number" id="farmCount" class="input-num" value="1" min="1" max="50">
+    <span class="input-label" style="margin-left:8px">Cooldown:</span>
+    <input type="number" id="farmCooldown" class="input-num" value="5" min="0" max="300" title="Seconds between accounts (sequential) or batches (parallel). 0 = no cooldown">
+    <span style="font-size:.72rem;color:var(--text3)">s</span>
     <div class="toggle-switch">
       <label for="parallelMode">Parallel</label>
       <div class="toggle">
@@ -616,6 +619,7 @@ async function stopFarm() {
 
 async function startFarm() {
   const count = parseInt(document.getElementById('farmCount').value) || 1;
+  const cooldown = parseInt(document.getElementById('farmCooldown').value) || 0;
   const useProxy = settingsData?.proxy?.mode === 'socks5' || false;
   const parallel = document.getElementById('parallelMode').checked;
 
@@ -623,7 +627,7 @@ async function startFarm() {
     const r = await fetch('/api/farm', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({count, proxy: useProxy, parallel})
+      body: JSON.stringify({count, proxy: useProxy, parallel, cooldown})
     });
     if (!r.ok) {
       const err = await r.json();

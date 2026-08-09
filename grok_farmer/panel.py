@@ -238,6 +238,7 @@ class FarmRequest(BaseModel):
     proxy: bool = True
     dry_run: bool = False
     parallel: bool = False
+    cooldown: int = 5
 
 
 
@@ -533,10 +534,10 @@ async def start_farm(req: FarmRequest):
         return JSONResponse({"error": "Count must be 1-100"}, status_code=400)
 
     state.reset(req.count)
-    state.add_log(f"Starting farm: {req.count} account(s), proxy={'on' if req.proxy else 'off'}, parallel={req.parallel}, dry_run={req.dry_run}")
+    state.add_log(f"Starting farm: {req.count} account(s), proxy={'on' if req.proxy else 'off'}, parallel={req.parallel}, cooldown={req.cooldown}s, dry_run={req.dry_run}")
     state.broadcast_progress()
 
-    thread = threading.Thread(target=_run_farm, args=(req.count, req.proxy, req.dry_run, req.parallel), daemon=True)
+    thread = threading.Thread(target=_run_farm, args=(req.count, req.proxy, req.dry_run, req.parallel, req.cooldown), daemon=True)
     thread.start()
 
     return JSONResponse({"started": True, "count": req.count})
@@ -1182,7 +1183,7 @@ class _StdoutCapture(io.TextIOBase):
         pass
 
 
-def _run_farm(count: int, use_proxy: bool, dry_run: bool, parallel: bool = False):
+def _run_farm(count: int, use_proxy: bool, dry_run: bool, parallel: bool = False, cooldown: int = 5):
     """Background thread that runs the farming loop."""
     old_stdout = sys.stdout
     old_stderr = sys.stderr
@@ -1217,7 +1218,7 @@ def _run_farm(count: int, use_proxy: bool, dry_run: bool, parallel: bool = False
             )
             pusher.login()
             tcfg = cfg["turnstile"]
-            args = Namespace(count=count, dry_run=dry_run)
+            args = Namespace(count=count, dry_run=dry_run, cooldown=cooldown)
             _run_parallel(cfg, args, tcfg, pusher, proxy_rotator)
             # Update state for UI
             state.completed = count
@@ -1278,7 +1279,9 @@ def _run_farm(count: int, use_proxy: bool, dry_run: bool, parallel: bool = False
 
             if i < count - 1:
                 solver.close()
-                time.sleep(5)
+                state.add_log(f"Cooldown: {cooldown}s...")
+                state.broadcast_progress()
+                time.sleep(cooldown)
 
         email_reader.disconnect()
         solver.close()
