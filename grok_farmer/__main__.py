@@ -193,6 +193,25 @@ def dismiss_cookies(page):
 
 
 # ─────────────────────────────────────────────
+# RETRY LOGIC
+# ─────────────────────────────────────────────
+
+_TRANSIENT_PATTERNS = [
+    "browser connection fail", "browser is closed", "connection has been disconnected",
+    "page is refreshed", "page has been disconnected", "no location or size",
+    "Connection too slow", "reconnect", "element not interactable",
+    "timeout", "ERR_NAME_NOT_RESOLVED", "ERR_CONNECTION_REFUSED",
+    "ERR_TIMED_OUT", "ERR_SOCKET_NOT_CONNECTED",
+]
+
+
+def is_transient_error(error_str):
+    """Check if an error is likely transient (network/browser/timing issue)."""
+    e = str(error_str).lower()
+    return any(p.lower() in e for p in _TRANSIENT_PATTERNS)
+
+
+# ─────────────────────────────────────────────
 # MAIN FLOW
 # ─────────────────────────────────────────────
 
@@ -914,7 +933,7 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
     return result
 
 
-def _parallel_worker(worker_id, cfg, tcfg, pusher_cfg, email_assignment, dry_run=False):
+def _parallel_worker(worker_id, cfg, tcfg, pusher_cfg, email_assignment, dry_run=False, headless=False):
     """Single parallel worker — runs in its own thread with its own browser.
 
     Args:
@@ -944,6 +963,7 @@ def _parallel_worker(worker_id, cfg, tcfg, pusher_cfg, email_assignment, dry_run
         timeout=tcfg.get("timeout", 60), debug=True,
         anti_detect=anti_detect,
         debug_port=port,
+        headless=headless,
     )
 
     # Each worker gets its own pusher (can't share across threads safely)
@@ -971,9 +991,36 @@ def _parallel_worker(worker_id, cfg, tcfg, pusher_cfg, email_assignment, dry_run
         result = run_single_account(
             cfg, solver, proxy_rotator, current_reader, pusher,
             dry_run, email_mode="generator",
-            used_domains=None,  # domains already pre-assigned
+            used_domains=None,
             pre_assigned_email=email,
         )
+
+        # Auto-retry on transient error (1x with fresh browser + new port)
+        if not result.get("success") and is_transient_error(result.get("error", "")) and not dry_run:
+            print(f"\n  [W{worker_id}] RETRY: Transient error, retrying with fresh browser...")
+            solver.close()
+            port = port + 100  # Different port on retry
+            anti_detect = AntiDetect(debug=True)
+            solver = TurnstileSolver(
+                extension_path=tcfg.get("extension_path", "turnstile_patch/"),
+                max_retries=tcfg.get("max_retries", 15),
+                timeout=tcfg.get("timeout", 60), debug=True,
+                anti_detect=anti_detect,
+                debug_port=port,
+                headless=headless,
+            )
+            if not solver._browser:
+                solver._launch_browser()
+            current_reader = GeneratorEmailReader(solver._browser)
+            result = run_single_account(
+                cfg, solver, proxy_rotator, current_reader, pusher,
+                dry_run, email_mode="generator",
+                used_domains=None,
+                pre_assigned_email=email,
+            )
+            if result.get("success"):
+                print(f"  [W{worker_id}] RETRY: SUCCESS on retry!")
+
         s = "SUCCESS" if result.get("success") else f"FAIL: {result.get('error', '?')[:80]}"
         print(f"\n  [W{worker_id}] RESULT: {s}")
         return result
@@ -1016,6 +1063,7 @@ def _run_parallel(cfg, args, tcfg, pusher, proxy_rotator):
         timeout=tcfg.get("timeout", 60), debug=True,
         anti_detect=AntiDetect(debug=True),
         debug_port=9222,
+        headless=getattr(args, 'headless', False),
     )
     pre_browser._launch_browser()
     all_assignments = pre_collect_domains(pre_browser._browser, target)
@@ -1026,18 +1074,30 @@ def _run_parallel(cfg, args, tcfg, pusher, proxy_rotator):
         print("  [ERROR] No domains collected. Aborting.")
         return 1
 
-    # ── Phase 2: Parallel batches with random sizes ──
+    # ── Phase 2: Parallel batches with adaptive sizes ──
     all_results = []
     processed = 0
+    consecutive_success = 0  # Track streak for adaptive sizing
 
     while processed < len(all_assignments):
         remaining = len(all_assignments) - processed
-        # Random batch size: 1 to min(max_batch, remaining)
-        batch_size = random.randint(1, min(max_batch, remaining))
+
+        # Adaptive batch sizing: grow on success streak, shrink on failure
+        if consecutive_success >= 3:
+            max_for_this = min(5, remaining)
+        elif consecutive_success >= 2:
+            max_for_this = min(4, remaining)
+        elif consecutive_success >= 1:
+            max_for_this = min(3, remaining)
+        else:
+            max_for_this = min(2, remaining)  # Conservative start
+
+        batch_size = random.randint(1, max_for_this)
         batch = all_assignments[processed:processed + batch_size]
 
         print(f"\n{'='*60}")
-        print(f"  BATCH: {batch_size} workers (remaining: {remaining})")
+        streak_txt = f" streak={consecutive_success}" if consecutive_success > 0 else ""
+        print(f"  BATCH: {batch_size} workers (remaining: {remaining}{streak_txt})")
         print(f"{'='*60}")
         for i, (u, d) in enumerate(batch):
             print(f"  [W{i}] {u}@{d}")
@@ -1048,7 +1108,7 @@ def _run_parallel(cfg, args, tcfg, pusher, proxy_rotator):
         batch_results = []
 
         def _worker_wrapper(wid, assignment):
-            r = _parallel_worker(wid, cfg, tcfg, pusher_cfg, assignment, args.dry_run)
+            r = _parallel_worker(wid, cfg, tcfg, pusher_cfg, assignment, args.dry_run, getattr(args, 'headless', False))
             with results_lock:
                 batch_results.append(r)
 
@@ -1063,7 +1123,14 @@ def _run_parallel(cfg, args, tcfg, pusher, proxy_rotator):
 
         all_results.extend(batch_results)
         processed += batch_size
-        print(f"\n  Batch done. {sum(1 for r in batch_results if r.get('success'))}/{batch_size} success")
+        batch_success = sum(1 for r in batch_results if r.get('success'))
+        print(f"\n  Batch done. {batch_success}/{batch_size} success")
+
+        # Update streak for adaptive sizing
+        if batch_success == batch_size:
+            consecutive_success += 1
+        else:
+            consecutive_success = 0
 
         # Cooldown between batches
         if processed < len(all_assignments):
@@ -1140,6 +1207,7 @@ def cmd_run(args):
             max_retries=tcfg.get("max_retries", 15),
             timeout=tcfg.get("timeout", 60), debug=True,
             anti_detect=anti_detect,
+            headless=getattr(args, 'headless', False),
         )
 
         # For generator.email mode, create reader from browser
@@ -1154,6 +1222,30 @@ def cmd_run(args):
                 args.dry_run, email_mode=email_mode,
                 used_domains=used_domains,
             )
+
+            # Auto-retry on transient error (1x with fresh browser)
+            if not result.get("success") and is_transient_error(result.get("error", "")) and not args.dry_run:
+                print(f"\n  [RETRY] Transient error detected, retrying with fresh browser...")
+                solver.close()
+                anti_detect = AntiDetect(debug=True)
+                solver = TurnstileSolver(
+                    extension_path=tcfg.get("extension_path", "turnstile_patch/"),
+                    max_retries=tcfg.get("max_retries", 15),
+                    timeout=tcfg.get("timeout", 60), debug=True,
+                    anti_detect=anti_detect,
+                    headless=getattr(args, 'headless', False),
+                )
+                if email_mode == "generator" and solver._browser:
+                    from .email_generator import GeneratorEmailReader
+                    current_reader = GeneratorEmailReader(solver._browser)
+                result = run_single_account(
+                    cfg, solver, proxy_rotator, current_reader, pusher,
+                    args.dry_run, email_mode=email_mode,
+                    used_domains=used_domains,
+                )
+                if result.get("success"):
+                    print(f"  [RETRY] SUCCESS on retry!")
+
             results.append(result)
             s = "SUCCESS" if result.get("success") else f"FAIL: {result.get('error', '?')[:80]}"
             print(f"\n  RESULT: {s}")
@@ -1267,6 +1359,7 @@ def main():
     run_parser.add_argument("--no-proxy", action="store_true", help="Skip proxy rotation")
     run_parser.add_argument("--parallel", action="store_true", help="Parallel mode: random batch 1-5 workers")
     run_parser.add_argument("--cooldown", type=int, default=5, help="Cooldown seconds between accounts (sequential) or batches (parallel). 0 = no cooldown")
+    run_parser.add_argument("--headless", action="store_true", help="Run browser in headless mode (no window)")
 
     # ── tui (default) ──
     tui_parser = subparsers.add_parser("tui", help="Start TUI dashboard (default)")

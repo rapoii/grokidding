@@ -239,6 +239,7 @@ class FarmRequest(BaseModel):
     dry_run: bool = False
     parallel: bool = False
     cooldown: int = 5
+    headless: bool = False
 
 
 
@@ -526,6 +527,13 @@ async def get_stats():
     })
 
 
+@app.get("/api/sessions")
+async def get_sessions(limit: int = 20):
+    """Recent farming session history."""
+    from .session_stats import load_sessions
+    return {"sessions": load_sessions(limit)}
+
+
 @app.post("/api/farm")
 async def start_farm(req: FarmRequest):
     if state.running:
@@ -534,10 +542,10 @@ async def start_farm(req: FarmRequest):
         return JSONResponse({"error": "Count must be 1-100"}, status_code=400)
 
     state.reset(req.count)
-    state.add_log(f"Starting farm: {req.count} account(s), proxy={'on' if req.proxy else 'off'}, parallel={req.parallel}, cooldown={req.cooldown}s, dry_run={req.dry_run}")
+    state.add_log(f"Starting farm: {req.count} account(s), proxy={'on' if req.proxy else 'off'}, parallel={req.parallel}, cooldown={req.cooldown}s, headless={req.headless}, dry_run={req.dry_run}")
     state.broadcast_progress()
 
-    thread = threading.Thread(target=_run_farm, args=(req.count, req.proxy, req.dry_run, req.parallel, req.cooldown), daemon=True)
+    thread = threading.Thread(target=_run_farm, args=(req.count, req.proxy, req.dry_run, req.parallel, req.cooldown, req.headless), daemon=True)
     thread.start()
 
     return JSONResponse({"started": True, "count": req.count})
@@ -1183,7 +1191,7 @@ class _StdoutCapture(io.TextIOBase):
         pass
 
 
-def _run_farm(count: int, use_proxy: bool, dry_run: bool, parallel: bool = False, cooldown: int = 5):
+def _run_farm(count: int, use_proxy: bool, dry_run: bool, parallel: bool = False, cooldown: int = 5, headless: bool = False):
     """Background thread that runs the farming loop."""
     old_stdout = sys.stdout
     old_stderr = sys.stderr
@@ -1218,7 +1226,7 @@ def _run_farm(count: int, use_proxy: bool, dry_run: bool, parallel: bool = False
             )
             pusher.login()
             tcfg = cfg["turnstile"]
-            args = Namespace(count=count, dry_run=dry_run, cooldown=cooldown)
+            args = Namespace(count=count, dry_run=dry_run, cooldown=cooldown, headless=headless)
             _run_parallel(cfg, args, tcfg, pusher, proxy_rotator)
             # Update state for UI
             state.completed = count
@@ -1248,6 +1256,7 @@ def _run_farm(count: int, use_proxy: bool, dry_run: bool, parallel: bool = False
             extension_path=tcfg.get("extension_path", "turnstile_patch/"),
             max_retries=tcfg.get("max_retries", 15),
             timeout=tcfg.get("timeout", 60), debug=True,
+            headless=headless,
         )
 
         for i in range(count):
@@ -1319,6 +1328,32 @@ def _run_farm(count: int, use_proxy: bool, dry_run: bool, parallel: bool = False
         state.finish()
         state.add_log("Farm run complete.")
         state.broadcast_progress()
+        # Save session statistics
+        try:
+            from grok_farmer.session_stats import save_session as _save_session
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc)
+            started = state.started_at
+            if isinstance(started, str):
+                try:
+                    started = datetime.fromisoformat(started)
+                except Exception:
+                    started = None
+            duration = round((now - started).total_seconds(), 1) if started else 0
+            session = {
+                "id": now.strftime("%Y%m%d_%H%M%S"),
+                "started_at": state.started_at,
+                "finished_at": now.isoformat(),
+                "count": count,
+                "mode": "parallel" if parallel else "sequential",
+                "cooldown": cooldown,
+                "successful": state.successful,
+                "failed": state.failed,
+                "duration_sec": duration,
+            }
+            _save_session(session)
+        except Exception as e:
+            state.add_log(f"Session save failed: {e}")
         # Refresh quota after farming
         state.add_log("Checking quota...")
         state.broadcast_quota()

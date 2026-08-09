@@ -299,6 +299,13 @@ tbody td{padding:12px 22px;font-size:.85rem}
         <span class="toggle-slider"></span>
       </div>
     </div>
+    <div class="toggle-switch">
+      <label for="headlessMode" title="Run browser without window (saves RAM)">Headless</label>
+      <div class="toggle">
+        <input type="checkbox" id="headlessMode">
+        <span class="toggle-slider"></span>
+      </div>
+    </div>
     <button id="btnFarm" class="btn btn-primary" onclick="startFarm()">
       <span class="spinner" id="farmSpinner"></span>
       <span id="btnFarmText">Start Farming</span>
@@ -336,6 +343,25 @@ tbody td{padding:12px 22px;font-size:.85rem}
     </div>
     <div class="log-body" id="logBody">
       <div class="log-line info">Waiting for activity...</div>
+    </div>
+    <div class="log-footer" style="display:flex;justify-content:space-between;align-items:center;padding:8px 18px;border-top:1px solid var(--border)">
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-sm" onclick="toggleSessions()">📊 Session History</button>
+        <button class="btn btn-sm" onclick="exportLogs()">💾 Export Logs</button>
+      </div>
+      <span id="logCount" style="font-size:.7rem;color:var(--text3)">0 lines</span>
+    </div>
+  </div>
+
+  <div id="sessionsPanel" style="display:none">
+    <div class="log-panel">
+      <div class="log-header">
+        <h2>Session History</h2>
+        <button class="btn btn-sm" onclick="toggleSessions()">✕ Close</button>
+      </div>
+      <div id="sessionsBody" style="padding:14px 18px;max-height:300px;overflow-y:auto">
+        <div style="color:var(--text3);font-size:.8rem">Loading...</div>
+      </div>
     </div>
   </div>
 
@@ -698,9 +724,75 @@ function addLog(line, scroll = true) {
   logBody.appendChild(div);
   while (logBody.children.length > 300) logBody.removeChild(logBody.firstChild);
   if (scroll) logBody.scrollTop = logBody.scrollHeight;
+  const counter = document.getElementById('logCount');
+  if (counter) counter.textContent = logBody.children.length + ' lines';
 }
 
 let renewData = null;
+let _logLines = []; // Cache for export
+
+async function toggleSessions() {
+  const panel = document.getElementById('sessionsPanel');
+  if (panel.style.display === 'none') {
+    panel.style.display = 'block';
+    await loadSessions();
+  } else {
+    panel.style.display = 'none';
+  }
+}
+
+async function loadSessions() {
+  const body = document.getElementById('sessionsBody');
+  try {
+    const res = await fetch('/api/sessions?limit=20');
+    const data = await res.json();
+    const sessions = data.sessions || [];
+    if (!sessions.length) {
+      body.innerHTML = '<div style="color:var(--text3);font-size:.8rem">No sessions recorded yet.</div>';
+      return;
+    }
+    let html = '<table style="width:100%;font-size:.78rem;border-collapse:collapse">';
+    html += '<tr style="color:var(--text3);border-bottom:1px solid var(--border)"><th style="text-align:left;padding:6px 8px">Date</th><th style="text-align:center;padding:6px 8px">Mode</th><th style="text-align:center;padding:6px 8px">Count</th><th style="text-align:center;padding:6px 8px">✓</th><th style="text-align:center;padding:6px 8px">✗</th><th style="text-align:right;padding:6px 8px">Duration</th></tr>';
+    for (const s of sessions) {
+      const date = s.started_at ? new Date(s.started_at).toLocaleString('id-ID', {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '?';
+      const dur = s.duration_sec ? (s.duration_sec > 60 ? Math.round(s.duration_sec/60)+'m' : s.duration_sec+'s') : '-';
+      const rate = s.count > 0 ? Math.round(s.successful/s.count*100) : 0;
+      const rowColor = rate === 100 ? 'var(--green)' : rate >= 50 ? 'var(--accent)' : 'var(--red)';
+      html += `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:5px 8px">${date}</td>
+        <td style="text-align:center;padding:5px 8px">${s.mode === 'parallel' ? '⚡ Parallel' : 'Sequential'}</td>
+        <td style="text-align:center;padding:5px 8px">${s.count}</td>
+        <td style="text-align:center;padding:5px 8px;color:var(--green)">${s.successful}</td>
+        <td style="text-align:center;padding:5px 8px;color:var(--red)">${s.failed}</td>
+        <td style="text-align:right;padding:5px 8px;color:${rowColor}">${dur}</td>
+      </tr>`;
+    }
+    html += '</table>';
+    body.innerHTML = html;
+  } catch (e) {
+    body.innerHTML = '<div style="color:var(--red);font-size:.8rem">Failed to load sessions: ' + e.message + '</div>';
+  }
+}
+
+function exportLogs() {
+  const logBody = document.getElementById('logBody');
+  const lines = [];
+  for (const child of logBody.children) {
+    lines.push(child.textContent);
+  }
+  if (!lines.length) {
+    alert('No logs to export');
+    return;
+  }
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const text = `Grokidding Log Export — ${new Date().toLocaleString()}\n${'='.repeat(60)}\n\n${lines.join('\n')}`;
+  const blob = new Blob([text], {type: 'text/plain'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `grokidding-log-${ts}.txt`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
 
 async function stopFarm() {
   try {
@@ -713,12 +805,13 @@ async function startFarm() {
   const cooldown = parseInt(document.getElementById('farmCooldown').value) || 0;
   const useProxy = settingsData?.proxy?.mode === 'socks5' || false;
   const parallel = document.getElementById('parallelMode').checked;
+  const headless = document.getElementById('headlessMode').checked;
 
   try {
     const r = await fetch('/api/farm', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({count, proxy: useProxy, parallel, cooldown})
+      body: JSON.stringify({count, proxy: useProxy, parallel, cooldown, headless})
     });
     if (!r.ok) {
       const err = await r.json();
