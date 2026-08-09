@@ -1227,10 +1227,15 @@ def _run_farm(count: int, use_proxy: bool, dry_run: bool, parallel: bool = False
             return
 
         # ── Sequential mode ──
-        email_reader = IMAPOtpReader(
-            ecfg["imap_host"], ecfg["imap_port"], ecfg["email"], ecfg["password"]
-        )
-        email_reader.connect()
+        email_mode = ecfg.get("mode", "generator")
+
+        if email_mode == "imap":
+            email_reader = IMAPOtpReader(
+                ecfg["imap_host"], ecfg["imap_port"], ecfg["email"], ecfg["password"]
+            )
+            email_reader.connect()
+        else:
+            email_reader = None  # generator.email mode handles OTP in-browser
 
         pusher = RouterPusher(
             cfg["ninrouter"]["base_url"], cfg["ninrouter"]["password"],
@@ -1246,18 +1251,25 @@ def _run_farm(count: int, use_proxy: bool, dry_run: bool, parallel: bool = False
         )
 
         for i in range(count):
-            state.current_step = f"farming {i + 1}/{count}"
-            state.completed = i
-            state.add_log(f"--- Account {i + 1}/{count} ---")
-            state.broadcast_progress()
-
             if state.stop_requested:
                 state.add_log(f"Stopped by user after {i} accounts.")
                 state.broadcast_progress()
                 break
 
+            state.current_step = f"farming {i + 1}/{count}"
+            state.completed = i
+            state.add_log(f"--- Account {i + 1}/{count} ---")
+            state.broadcast_progress()
+
+            # For generator mode, create reader from browser
+            current_reader = email_reader
+            if email_mode == "generator" and solver._browser:
+                from .email_generator import GeneratorEmailReader
+                current_reader = GeneratorEmailReader(solver._browser)
+
             result = run_single_account(
-                cfg, solver, proxy_rotator, email_reader, pusher, dry_run
+                cfg, solver, proxy_rotator, current_reader, pusher, dry_run,
+                email_mode=email_mode,
             )
 
             if result.get("success"):
@@ -1279,11 +1291,23 @@ def _run_farm(count: int, use_proxy: bool, dry_run: bool, parallel: bool = False
 
             if i < count - 1:
                 solver.close()
+                if state.stop_requested:
+                    state.add_log(f"Stopped by user after {i + 1} accounts.")
+                    state.broadcast_progress()
+                    break
                 state.add_log(f"Cooldown: {cooldown}s...")
                 state.broadcast_progress()
-                time.sleep(cooldown)
+                for _ in range(cooldown):
+                    if state.stop_requested:
+                        break
+                    time.sleep(1)
+                if state.stop_requested:
+                    state.add_log(f"Stopped by user after {i + 1} accounts.")
+                    state.broadcast_progress()
+                    break
 
-        email_reader.disconnect()
+        if email_reader:
+            email_reader.disconnect()
         solver.close()
 
     except Exception as e:
