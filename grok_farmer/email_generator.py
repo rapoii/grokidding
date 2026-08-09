@@ -211,11 +211,10 @@ def extract_xai_code(text: str) -> Optional[str]:
 
 
 class GeneratorEmailReader:
-    """Read OTP codes from generator.email via fetch()-based polling.
+    """Read OTP codes from generator.email via page-refresh polling.
 
-    Polls the inbox page using fetch() (AJAX) instead of full-page reload.
-    fetch() downloads only the HTML text (~50KB) without re-rendering
-    CSS, JS, images, or ads (~500KB per full reload).
+    Polls the inbox page using tab.get() (full page reload).
+    CDP ad blocking is applied to the browser to reduce bandwidth.
     """
 
     def __init__(self, browser):
@@ -224,21 +223,21 @@ class GeneratorEmailReader:
 
     def wait_for_otp(self, timeout: int = 180, poll_interval: float = 3.0,
                      target_email: str = "", **kwargs) -> Optional[str]:
-        """Wait for xAI OTP via fetch()-based inbox polling.
+        """Wait for xAI OTP via page-refresh polling.
 
-        Uses adaptive polling: 3s interval for first 30s (OTP usually
-        arrives fast), then 5s after that.
+        Uses tab.get() to reload the inbox page each cycle.
+        Set GROK_DUAL_COMPARE=1 to also run fetch() alongside for comparison.
         """
         if not target_email:
             print("  [otp] ERROR: No target_email")
             return None
 
         inbox_url = f"https://generator.email/{target_email}"
-        print(f"  [otp] Polling inbox: {target_email}")
+        dual = bool(os.environ.get("GROK_DUAL_COMPARE"))
+        print(f"  [otp] Polling inbox: {target_email}" + (" (DUAL compare)" if dual else ""))
 
         year_set = {"202020", "202120", "202220", "202320", "202420", "202520", "202620"}
 
-        # Open inbox tab ONCE — subsequent polls use fetch(), not page reload
         tab = None
         pre_codes = set()
         try:
@@ -256,94 +255,141 @@ class GeneratorEmailReader:
             print("  [otp] Tab creation failed")
             return None
 
-        # Poll inbox via fetch() — lightweight, no page reload
         start = time.time()
 
         while time.time() - start < timeout:
             elapsed = int(time.time() - start)
 
             try:
-                # fetch() the inbox page — gets HTML text only, no re-render
-                # This is ~50-80KB vs ~500KB for a full page reload
-                html = _run_js_safe(
-                    tab,
-                    f"""
-                    (async function() {{
-                        try {{
-                            var resp = await fetch({json.dumps(inbox_url)}, {{
-                                headers: {{'X-Requested-With': 'XMLHttpRequest'}},
-                                credentials: 'same-origin'
-                            }});
-                            return await resp.text();
-                        }} catch(e) {{
-                            return 'ERROR:' + e.message;
-                        }}
-                    }})()
-                    """,
-                    timeout_sec=10,
-                    default=None
-                )
+                # --- Method A: fetch() (lightweight, no re-render) ---
+                if dual:
+                    fetch_html = _run_js_safe(
+                        tab,
+                        f"""
+                        (async function() {{
+                            try {{
+                                var resp = await fetch({json.dumps(inbox_url)}, {{
+                                    headers: {{'X-Requested-With': 'XMLHttpRequest'}},
+                                    credentials: 'same-origin'
+                                }});
+                                return await resp.text();
+                            }} catch(e) {{
+                                return 'ERROR:' + e.message;
+                            }}
+                        }})()
+                        """,
+                        timeout_sec=10,
+                        default=None
+                    )
 
-                if not html or html.startswith("ERROR"):
-                    # fetch() failed — fall back to page reload this cycle
-                    if html and html.startswith("ERROR"):
-                        pass  # Non-fatal, will retry next cycle
+                    fetch_len = len(fetch_html) if fetch_html else 0
+                    fetch_has_xai = False
+                    fetch_code = None
+                    if fetch_html and not fetch_html.startswith("ERROR"):
+                        fetch_lower = fetch_html.lower()
+                        fetch_has_xai = any(kw in fetch_lower for kw in [
+                            "xai", "spacexai", "x.ai", "confirmation", "verify"
+                        ])
+                        if fetch_has_xai:
+                            fetch_code = extract_xai_code(fetch_html)
+                            if fetch_code and fetch_code in pre_codes:
+                                fetch_code = None
+
+                    # --- Method B: tab.get() (full page reload) ---
+                    tab.get(inbox_url)
+                    time.sleep(2)
+                    page_html = tab.html
+                    page_len = len(page_html) if page_html else 0
+                    page_has_xai = False
+                    page_code = None
+                    if page_html:
+                        page_lower = page_html.lower()
+                        page_has_xai = any(kw in page_lower for kw in [
+                            "xai", "spacexai", "x.ai", "confirmation", "verify"
+                        ])
+                        if page_has_xai:
+                            page_code = extract_xai_code(page_html)
+                            if page_code and page_code in pre_codes:
+                                page_code = None
+                            # Try clicking into email if OTP not in list HTML
+                            if not page_code:
+                                items = re.findall(
+                                    r'onclick=["\']loadInboxClientSide\(["\']([^"\']+)["\'])["\']',
+                                    page_html
+                                )
+                                if not items:
+                                    items = re.findall(
+                                        r'href=["\']/([^"\']*(?:xai|spacexai|x\.ai|confirmation|verify)[^"\']*)["\']',
+                                        page_html, re.IGNORECASE
+                                    )
+                                for item_link in items:
+                                    email_url = f"https://generator.email/{item_link}"
+                                    tab.get(email_url)
+                                    time.sleep(2)
+                                    email_html = tab.html
+                                    if email_html:
+                                        c = extract_xai_code(email_html)
+                                        if c and c not in pre_codes:
+                                            page_code = c
+                                            break
+                                    # Go back to inbox
+                                    tab.get(inbox_url)
+                                    time.sleep(1)
+
+                    # Log comparison each cycle
+                    print(f"  [otp-dual] {elapsed}s | fetch: {fetch_len}B xai={fetch_has_xai} code={fetch_code} | page: {page_len}B xai={page_has_xai} code={page_code}")
+
+                    if page_code:
+                        print(f"  [otp] PAGE wins! CODE: {page_code}")
+                        self._safe_close_tab(tab)
+                        return page_code
+                    if fetch_code:
+                        print(f"  [otp] FETCH wins! CODE: {fetch_code}")
+                        self._safe_close_tab(tab)
+                        return fetch_code
+
                 else:
-                    # Check for xAI keywords in the fetched HTML
-                    html_lower = html.lower()
-                    has_xai = any(kw in html_lower for kw in [
-                        "xai", "spacexai", "x.ai", "confirmation", "verify"
-                    ])
+                    # --- Normal mode: tab.get() only ---
+                    tab.get(inbox_url)
+                    time.sleep(2)
+                    page_html = tab.html
 
-                    if has_xai:
-                        # Try to find OTP in the fetched HTML directly
-                        code = extract_xai_code(html)
-                        if code and code not in pre_codes:
-                            print(f"  [otp] CODE: {code}")
-                            self._safe_close_tab(tab)
-                            return code
+                    if page_html:
+                        page_lower = page_html.lower()
+                        has_xai = any(kw in page_lower for kw in [
+                            "xai", "spacexai", "x.ai", "confirmation", "verify"
+                        ])
 
-                        # OTP not in inbox HTML — try clicking into the email
-                        # Look for list-group-item links containing xAI keywords
-                        items = re.findall(
-                            r'onclick=["\']loadInboxClientSide\(["\']([^"\']+)["\'])["\']',
-                            html
-                        )
-                        if not items:
-                            # Fallback: look for href links
+                        if has_xai:
+                            code = extract_xai_code(page_html)
+                            if code and code not in pre_codes:
+                                print(f"  [otp] CODE: {code}")
+                                self._safe_close_tab(tab)
+                                return code
+
+                            # Try clicking into email
                             items = re.findall(
-                                r'href=["\']/([^"\']*(?:xai|spacexai|x\.ai|confirmation|verify)[^"\']*)["\']',
-                                html, re.IGNORECASE
+                                r'onclick=["\']loadInboxClientSide\(["\']([^"\']+)["\'])["\']',
+                                page_html
                             )
-
-                        for item_link in items:
-                            # Fetch the individual email page
-                            email_url = f"https://generator.email/{item_link}"
-                            email_html = _run_js_safe(
-                                tab,
-                                f"""
-                                (async function() {{
-                                    try {{
-                                        var resp = await fetch({json.dumps(email_url)}, {{
-                                            headers: {{'X-Requested-With': 'XMLHttpRequest'}},
-                                            credentials: 'same-origin'
-                                        }});
-                                        return await resp.text();
-                                    }} catch(e) {{
-                                        return '';
-                                    }}
-                                }})()
-                                """,
-                                timeout_sec=10,
-                                default=""
-                            )
-
-                            if email_html:
-                                code = extract_xai_code(email_html)
-                                if code and code not in pre_codes:
-                                    print(f"  [otp] CODE: {code}")
-                                    self._safe_close_tab(tab)
-                                    return code
+                            if not items:
+                                items = re.findall(
+                                    r'href=["\']/([^"\']*(?:xai|spacexai|x\.ai|confirmation|verify)[^"\']*)["\']',
+                                    page_html, re.IGNORECASE
+                                )
+                            for item_link in items:
+                                email_url = f"https://generator.email/{item_link}"
+                                tab.get(email_url)
+                                time.sleep(2)
+                                email_html = tab.html
+                                if email_html:
+                                    code = extract_xai_code(email_html)
+                                    if code and code not in pre_codes:
+                                        print(f"  [otp] CODE: {code}")
+                                        self._safe_close_tab(tab)
+                                        return code
+                                tab.get(inbox_url)
+                                time.sleep(1)
 
             except Exception as e:
                 err_str = str(e)[:60]
@@ -360,9 +406,8 @@ class GeneratorEmailReader:
 
             # Status log every 15s
             if elapsed > 0 and elapsed % 15 == 0:
-                print(f"  [otp] ...{elapsed}s, checking inbox via fetch()")
+                print(f"  [otp] ...{elapsed}s")
 
-            # Adaptive poll interval: 3s for first 30s, 5s after
             current_interval = poll_interval if elapsed < 30 else min(poll_interval + 2, 5.0)
             time.sleep(current_interval)
 
