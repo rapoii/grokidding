@@ -14,7 +14,7 @@ from typing import Optional, Tuple
 class TurnstileSolver:
     def __init__(self, extension_path, max_retries: int = 15,
                  timeout: int = 60, debug: bool = False, anti_detect=None,
-                 debug_port: int = 9222, headless: bool = False):
+                 debug_port: int = 9222):
         # Accept either a config dict or extension path string
         if isinstance(extension_path, dict):
             cfg = extension_path
@@ -33,7 +33,6 @@ class TurnstileSolver:
         self._browser = None
         self._proxy = None
         self._forwarder = None
-        self._headless = headless
 
     def set_proxy(self, proxy_url: str):
         """Set proxy for browser. Supports socks5/socks4/http/https."""
@@ -66,11 +65,6 @@ class TurnstileSolver:
                 opts.set_argument("--disable-blink-features=AutomationControlled")
                 opts.set_argument("--no-first-run")
                 opts.set_argument("--no-default-browser-check")
-
-            # Headless mode
-            if self._headless:
-                opts.headless(True)
-                opts.set_argument("--headless=new")
 
             # Proxy support — SOCKS5 with auth needs local forwarder, others direct
             if self._proxy:

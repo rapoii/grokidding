@@ -239,7 +239,6 @@ class FarmRequest(BaseModel):
     dry_run: bool = False
     parallel: bool = False
     cooldown: int = 5
-    headless: bool = False
 
 
 
@@ -542,10 +541,10 @@ async def start_farm(req: FarmRequest):
         return JSONResponse({"error": "Count must be 1-100"}, status_code=400)
 
     state.reset(req.count)
-    state.add_log(f"Starting farm: {req.count} account(s), proxy={'on' if req.proxy else 'off'}, parallel={req.parallel}, cooldown={req.cooldown}s, headless={req.headless}, dry_run={req.dry_run}")
+    state.add_log(f"Starting farm: {req.count} account(s), proxy={'on' if req.proxy else 'off'}, parallel={req.parallel}, cooldown={req.cooldown}s, dry_run={req.dry_run}")
     state.broadcast_progress()
 
-    thread = threading.Thread(target=_run_farm, args=(req.count, req.proxy, req.dry_run, req.parallel, req.cooldown, req.headless), daemon=True)
+    thread = threading.Thread(target=_run_farm, args=(req.count, req.proxy, req.dry_run, req.parallel, req.cooldown), daemon=True)
     thread.start()
 
     return JSONResponse({"started": True, "count": req.count})
@@ -1191,7 +1190,7 @@ class _StdoutCapture(io.TextIOBase):
         pass
 
 
-def _run_farm(count: int, use_proxy: bool, dry_run: bool, parallel: bool = False, cooldown: int = 5, headless: bool = False):
+def _run_farm(count: int, use_proxy: bool, dry_run: bool, parallel: bool = False, cooldown: int = 5):
     """Background thread that runs the farming loop."""
     old_stdout = sys.stdout
     old_stderr = sys.stderr
@@ -1226,7 +1225,7 @@ def _run_farm(count: int, use_proxy: bool, dry_run: bool, parallel: bool = False
             )
             pusher.login()
             tcfg = cfg["turnstile"]
-            args = Namespace(count=count, dry_run=dry_run, cooldown=cooldown, headless=headless)
+            args = Namespace(count=count, dry_run=dry_run, cooldown=cooldown)
             _run_parallel(cfg, args, tcfg, pusher, proxy_rotator)
             # Update state for UI
             state.completed = count
@@ -1256,7 +1255,6 @@ def _run_farm(count: int, use_proxy: bool, dry_run: bool, parallel: bool = False
             extension_path=tcfg.get("extension_path", "turnstile_patch/"),
             max_retries=tcfg.get("max_retries", 15),
             timeout=tcfg.get("timeout", 60), debug=True,
-            headless=headless,
         )
 
         for i in range(count):
