@@ -131,16 +131,19 @@ def _run_js_safe(tab, js_code, timeout_sec=10, default=None):
     return result[0]
 
 
-def generate_email_from_browser(browser, max_attempts: int = 10) -> str:
+def generate_email_from_browser(browser, max_attempts: int = 10, used_domains: set = None) -> str:
     """Generate a fresh email address from generator.email via browser.
 
     Opens generator.email, clicks "Generate new e-mail" until we get
     a supported domain (not generator.email or blocked domains).
+    Pass used_domains to ensure unique domains within a batch.
     """
     UNSUPPORTED_DOMAINS = {"generator.email", "dharmadi.com"}
     # xAI silently drops OTP or rejects signup for domains containing these
     BLOCKED_DOMAIN_PATTERNS = ["gmail", "googlemail", "outlook", "hotmail", "yahoo",
                                "getmails", "mailfirefly", "tempmail", "10minutemail"]
+    if used_domains is None:
+        used_domains = set()
 
     tab = browser.new_tab("https://generator.email")
     # Wait for SPA to fully render (extension loading can delay DOM)
@@ -204,8 +207,11 @@ def generate_email_from_browser(browser, max_attempts: int = 10) -> str:
                 print(f"  [email] Domain {domain} unsupported, regenerating... (attempt {attempt+1})")
             elif any(pat in domain_lower for pat in BLOCKED_DOMAIN_PATTERNS):
                 print(f"  [email] Domain {domain} matches blocked pattern, regenerating... (attempt {attempt+1})")
+            elif domain in used_domains:
+                print(f"  [email] Domain {domain} already used in this batch, regenerating... (attempt {attempt+1})")
             else:
                 print(f"  [email] Generated: {email} (attempt {attempt+1})")
+                used_domains.add(domain)
                 tab.close()
                 return email
         else:

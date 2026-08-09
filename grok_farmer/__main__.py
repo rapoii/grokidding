@@ -196,7 +196,7 @@ def dismiss_cookies(page):
 # MAIN FLOW
 # ─────────────────────────────────────────────
 
-def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run=False, email_mode='imap'):
+def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run=False, email_mode='imap', used_domains=None):
     ecfg = cfg["email"]
     scfg = cfg["signup"]
     ocfg = cfg["output"]
@@ -259,7 +259,7 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
 
         # Generate email from browser + create reader (generator mode)
         if email_mode == "generator":
-            email = generate_email_from_browser(solver._browser)
+            email = generate_email_from_browser(solver._browser, used_domains=used_domains)
             user_part, domain_part = email.split("@", 1)
             result["email"] = email
             print(f"  [INIT] Generated email: {email}")
@@ -950,6 +950,7 @@ def cmd_run(args):
     solver = None
 
     results = []
+    used_domains = set()
     for i in range(args.count):
         print(f"\n{'='*60}")
         print(f"  Account {i+1}/{args.count}")
@@ -974,6 +975,7 @@ def cmd_run(args):
             result = run_single_account(
                 cfg, solver, proxy_rotator, current_reader, pusher,
                 args.dry_run, email_mode=email_mode,
+                used_domains=used_domains,
             )
             results.append(result)
             s = "SUCCESS" if result.get("success") else f"FAIL: {result.get('error', '?')[:80]}"
