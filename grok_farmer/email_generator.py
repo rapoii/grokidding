@@ -429,7 +429,12 @@ class GeneratorEmailReader:
         pre_codes = set()
         try:
             tab = self._browser.new_tab(inbox_url)
-            time.sleep(5)
+            time.sleep(3)
+            # Ensure tab actually navigated (parallel mode can cause about:blank)
+            if tab.url and "about:blank" in tab.url:
+                print(f"  [otp] Tab was about:blank, navigating explicitly...")
+                tab.get(inbox_url)
+                time.sleep(3)
             pre_html = tab.html
             pre_codes = set(re.findall(r"([A-Z0-9]{3}-[A-Z0-9]{3})", pre_html))
             pre_codes.update(re.findall(r"([A-Z0-9]{6})", pre_html))

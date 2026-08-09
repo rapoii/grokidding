@@ -928,7 +928,7 @@ def _parallel_worker(worker_id, cfg, tcfg, pusher_cfg, email_assignment, dry_run
     import threading
     from .turnstile import TurnstileSolver
     from .anti_detect import AntiDetect
-    from .email_generator import GeneratorEmailReader, use_email_in_browser
+    from .email_generator import GeneratorEmailReader
     from .router_push import RouterPusher
     from .proxy import ProxyRotator
 
@@ -960,8 +960,9 @@ def _parallel_worker(worker_id, cfg, tcfg, pusher_cfg, email_assignment, dry_run
     if not solver._browser:
         solver._launch_browser()
 
-    # Set the pre-assigned email in generator.email
-    use_email_in_browser(solver._browser, username, domain)
+    # Note: email setup is handled inside run_single_account via use_email_in_browser
+    # Don't call use_email_in_browser here — it opens/closes a tab prematurely,
+    # causing the OTP tab to open as about:blank instead of generator.email
 
     # Create reader from this browser
     current_reader = GeneratorEmailReader(solver._browser)
