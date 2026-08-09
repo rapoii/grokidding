@@ -21,27 +21,65 @@ from typing import Optional
 
 # Domains to block at CDP level (ads, tracking, analytics)
 BLOCKED_DOMAINS = [
+    # --- Google Ads ---
     "pagead2.googlesyndication.com",
+    "tpc.googlesyndication.com",
     "googleads.g.doubleclick.net",
+    "cm.g.doubleclick.net",
+    # --- Google consent/privacy popup (49.8% of bandwidth!) ---
     "fundingchoicesmessages.google.com",
+    # --- Google ad traffic quality ---
     "ep1.adtrafficquality.google",
     "ep2.adtrafficquality.google",
-    "www.google.co.id/pagead",
-    "www.google.com/pagead",
-    "www.google.com/ccm",
-    "www.google.com/rmkt",
+    # --- Google analytics/tag manager ---
     "analytics.google.com",
     "www.googletagmanager.com",
+    "www.google.com/recaptcha",
+    "www.google.com/ads",
+    "www.google.com/adsense",
+    "www.google.com/ads/measurement",
+    "www.gstatic.com/mysidia",
+    # --- AdScore ---
+    "data.ad-score.com",
+    "js.ad-score.com",
+    # --- AdSafe / IAS verification ---
+    "adsafeprotected.com",
+    "dt.adsafeprotected.com",
+    "fw.adsafeprotected.com",
+    "jsconfig.adsafeprotected.com",
+    "static.adsafeprotected.com",
+    "pixel.adsafeprotected.com",
+    # --- Quantcast tracking ---
+    "pixel.quantcount.com",
+    "pixel.quantserve.com",
+    "content.quantcount.com",
+    "creative-measurement.quantcount.com",
+    "exch.quantcount.com",
+    "asia-google-rtb.quantserve.com",
+    # --- Flashtalking ads ---
+    "servedby.flashtalking.com",
+    "ajs-assets.ftstatic.com",
+    "agen-assets.ftstatic.com",
+    "d9.flashtalking.com",
+    "cdn.flashtalking.com",
+    "secure.flashtalking.com",
+    # --- Yahoo analytics ---
+    "ups.analytics.yahoo.com",
+    # --- Twitter ---
     "t.co",
     "analytics.twitter.com",
     "static.ads-twitter.com",
+    # --- Fonts (non-essential, text stays readable) ---
+    "fonts.googleapis.com",
+    "fonts.gstatic.com",
+    # --- Other tracking ---
     "stapecdn.com",
     "websdk.appsflyersdk.com",
     "wa.appsflyersdk.com",
     "wa.onelink.me",
     "static.cloudflareinsights.com",
     "sgtm-prod-985009374134.us-central1.run.app",
-    # generator.email non-essential assets
+    # --- generator.email non-essential JS assets ---
     "qrcode.js",
     "share-qr.js",
     "ga-events.js",
