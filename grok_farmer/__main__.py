@@ -1268,7 +1268,7 @@ def main():
 
     # ── panel (legacy) ──
     panel_parser = subparsers.add_parser("panel", help="[Legacy] Start web control panel")
-    panel_parser.add_argument("--port", type=int, default=8083, help="Server port")
+    panel_parser.add_argument("--port", type=int, default=8090, help="Server port")
     panel_parser.add_argument("--host", type=str, default="127.0.0.1", help="Bind host")
     panel_parser.add_argument("--config", type=str, help="Config file path")
 

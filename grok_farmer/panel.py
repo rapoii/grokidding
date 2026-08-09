@@ -1299,7 +1299,7 @@ def _run_farm(count: int, use_proxy: bool, dry_run: bool, parallel: bool = False
 
 # ── Server Runner ──
 
-def run_panel(host: str = "0.0.0.0", port: int = 8080):
+def run_panel(host: str = "0.0.0.0", port: int = 8090):
     """Start the panel server."""
     print(f"\n{'=' * 50}")
     print(f"  GROKKIDDING PANEL")
