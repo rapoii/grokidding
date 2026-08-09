@@ -74,9 +74,9 @@ class OAuthClient:
             print(f"  [oauth] device_code OK, user_code={result.get('user_code')}")
         return result
 
-    def poll_token(
-        self, device_code: str, code_verifier: str, interval: int = 5, timeout: int = 300
-    ) -> dict:
+    def poll_token(self, device_code: str, code_verifier: str = "",
+                   interval: int = 5, timeout: int = 180,
+                   stop_event=None) -> dict:
         """Poll xAI directly for access token (bypass 9Router poll).
 
         CRITICAL: code_verifier from 9Router's device-code response is REQUIRED.
@@ -92,6 +92,8 @@ class OAuthClient:
         }
         start = time.time()
         while time.time() - start < timeout:
+            if stop_event and stop_event.is_set():
+                return {"error": "cancelled"}
             resp = self._session.post(
                 TOKEN_URL,
                 data=data,
@@ -116,7 +118,13 @@ class OAuthClient:
                     wait = max(interval, int(body.get("interval", interval)) + 2)
                 if self.debug:
                     print(f"  [oauth] {error}, wait {wait}s...")
-                time.sleep(wait)
+                # Sleep in small chunks so stop_event can interrupt
+                slept = 0
+                while slept < wait:
+                    if stop_event and stop_event.is_set():
+                        return {"error": "cancelled"}
+                    time.sleep(min(1, wait - slept))
+                    slept += 1
                 continue
 
             # Terminal errors

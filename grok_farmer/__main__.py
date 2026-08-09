@@ -548,7 +548,7 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
         print(f"  [9/10] Clicking 'Complete sign up'...")
         redirected = False
         MAX_TS_RESETS = 3  # How many times to reset + re-solve Turnstile
-        MAX_CLICK_ATTEMPTS = 4  # Click attempts per Turnstile cycle
+        MAX_CLICK_ATTEMPTS = 2  # Click attempts per Turnstile cycle (reduced from 4 — if 2 clicks don't redirect, token expired)
 
         for ts_cycle in range(MAX_TS_RESETS):
             # ── Phase 1: Wait for auto-solve (extension handles it) ──
@@ -726,12 +726,14 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
 
         # Start direct xAI poll BEFORE browser approval
         poll_result = {"token": None, "error": None}
+        poll_stop = threading.Event()
 
         def _poll():
             try:
                 poll_result["token"] = oauth_client.poll_token(
                     device_code, code_verifier=code_verifier,
                     interval=interval, timeout=180,
+                    stop_event=poll_stop,
                 )
             except Exception as e:
                 poll_result["error"] = str(e)
@@ -748,6 +750,7 @@ def run_single_account(cfg, solver, proxy_rotator, email_reader, pusher, dry_run
 
         if "sign-in" in page.url:
             print(f" [10] Redirected to sign-in — not logged in!")
+            poll_stop.set()
             result["error"] = "Not logged in — cannot approve device code"
             return result
 

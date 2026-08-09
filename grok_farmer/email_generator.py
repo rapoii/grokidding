@@ -161,6 +161,9 @@ def generate_email_from_browser(browser, max_attempts: int = 10) -> str:
         except Exception:
             pass
 
+    _last_domain = None
+    _same_domain_count = 0
+
     for attempt in range(max_attempts):
         email = None
 
@@ -207,6 +210,30 @@ def generate_email_from_browser(browser, max_attempts: int = 10) -> str:
                 return email
         else:
             print(f"  [email] Could not read email, regenerating... (attempt {attempt+1})")
+
+        # Detect domain caching — if same domain repeats 3x, reload page for fresh seed
+        if email:
+            current_domain = email.split("@", 1)[1]
+            if current_domain == _last_domain:
+                _same_domain_count += 1
+            else:
+                _same_domain_count = 0
+                _last_domain = current_domain
+            if _same_domain_count >= 3:
+                print(f"  [email] Domain {current_domain} cached {_same_domain_count+1}x, reloading page...")
+                tab.get("https://generator.email")
+                time.sleep(5)
+                for _ in range(3):
+                    try:
+                        gen_btn = tab.ele("text:Generate new e-mail", timeout=3)
+                        if gen_btn:
+                            gen_btn.click()
+                            time.sleep(2)
+                    except Exception:
+                        pass
+                _last_domain = None
+                _same_domain_count = 0
+                continue
 
         # Click "Generate new e-mail" to get a different email
         try:
