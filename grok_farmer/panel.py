@@ -21,6 +21,7 @@ from typing import Optional
 import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 # ── Project paths ──
@@ -231,6 +232,13 @@ def _fetch_quota_sync() -> dict:
 
 # ── App ──
 app = FastAPI(title="Grokidding Panel")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class FarmRequest(BaseModel):
