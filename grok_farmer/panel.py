@@ -237,6 +237,7 @@ class FarmRequest(BaseModel):
     count: int = 1
     proxy: bool = True
     dry_run: bool = False
+    parallel: bool = False
 
 
 
@@ -532,10 +533,10 @@ async def start_farm(req: FarmRequest):
         return JSONResponse({"error": "Count must be 1-100"}, status_code=400)
 
     state.reset(req.count)
-    state.add_log(f"Starting farm: {req.count} account(s), proxy={'on' if req.proxy else 'off'}, dry_run={req.dry_run}")
+    state.add_log(f"Starting farm: {req.count} account(s), proxy={'on' if req.proxy else 'off'}, parallel={req.parallel}, dry_run={req.dry_run}")
     state.broadcast_progress()
 
-    thread = threading.Thread(target=_run_farm, args=(req.count, req.proxy, req.dry_run), daemon=True)
+    thread = threading.Thread(target=_run_farm, args=(req.count, req.proxy, req.dry_run, req.parallel), daemon=True)
     thread.start()
 
     return JSONResponse({"started": True, "count": req.count})
@@ -1181,7 +1182,7 @@ class _StdoutCapture(io.TextIOBase):
         pass
 
 
-def _run_farm(count: int, use_proxy: bool, dry_run: bool):
+def _run_farm(count: int, use_proxy: bool, dry_run: bool, parallel: bool = False):
     """Background thread that runs the farming loop."""
     old_stdout = sys.stdout
     old_stderr = sys.stderr
@@ -1206,6 +1207,25 @@ def _run_farm(count: int, use_proxy: bool, dry_run: bool):
             adb_config=cfg["proxy"].get("adb"),
         )
 
+        # ── Parallel mode ──
+        if parallel:
+            from argparse import Namespace
+            from .__main__ import _run_parallel
+            pusher = RouterPusher(
+                cfg["ninrouter"]["base_url"], cfg["ninrouter"]["password"],
+                cfg["ninrouter"].get("db_path"), debug=True,
+            )
+            pusher.login()
+            tcfg = cfg["turnstile"]
+            args = Namespace(count=count, dry_run=dry_run)
+            _run_parallel(cfg, args, tcfg, pusher, proxy_rotator)
+            # Update state for UI
+            state.completed = count
+            state.successful = count  # approximate; _run_parallel prints results
+            state.broadcast_progress()
+            return
+
+        # ── Sequential mode ──
         email_reader = IMAPOtpReader(
             ecfg["imap_host"], ecfg["imap_port"], ecfg["email"], ecfg["password"]
         )
