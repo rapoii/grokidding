@@ -85,18 +85,19 @@ export function Sidebar() {
               onClose={() => setMobileOpen(false)}
             />
           </motion.aside>
-        ) : (
-          <aside className="sticky top-0 hidden h-[100dvh] w-[240px] shrink-0 flex-col glass-panel lg:flex">
-            <SidebarContent
-              pathname={pathname}
-              theme={theme}
-              resolved={resolved}
-              ThemeIcon={ThemeIcon}
-              cycleTheme={cycleTheme}
-            />
-          </aside>
-        )}
+        ) : null}
       </AnimatePresence>
+
+      {/* Desktop sidebar — persistent, never on mobile */}
+      <aside className="sticky top-0 hidden h-[100dvh] w-[240px] shrink-0 flex-col glass-panel lg:flex">
+        <SidebarContent
+          pathname={pathname}
+          theme={theme}
+          resolved={resolved}
+          ThemeIcon={ThemeIcon}
+          cycleTheme={cycleTheme}
+        />
+      </aside>
     </>
   );
 }

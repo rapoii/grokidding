@@ -44,12 +44,12 @@ export default function DashboardPage() {
 
   if (loading && !stats) {
     return (
-      <div className="mx-auto max-w-5xl px-6 py-8 pl-16 lg:pl-8">
+      <div className="mx-auto max-w-5xl px-5 pt-14 lg:px-8 lg:pt-8">
         <div className="mb-8">
           <div className="skeleton mb-3 h-8 w-40 rounded-lg" />
           <div className="skeleton h-4 w-64 rounded-lg" />
         </div>
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           {[...Array(4)].map((_, i) => (
             <div key={i} className="skeleton h-28 rounded-2xl" />
           ))}
@@ -61,10 +61,10 @@ export default function DashboardPage() {
   const recentAccounts = accounts.slice(0, 8);
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-8 pl-16 lg:pl-8">
+    <div className="mx-auto max-w-5xl px-5 pt-14 lg:px-8 lg:pt-8">
       {/* Header */}
-      <div className="mb-8 flex items-center justify-between">
-        <div>
+      <div className="mb-8 flex items-center justify-between gap-3">
+        <div className="min-w-0">
           <h1 className="text-[28px] font-bold tracking-tight text-[var(--color-text)]">
             Dashboard
           </h1>
@@ -155,13 +155,13 @@ export default function DashboardPage() {
                 <th className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
                   Email
                 </th>
-                <th className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                <th className="hidden px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)] sm:table-cell">
                   Name
                 </th>
                 <th className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
                   Status
                 </th>
-                <th className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                <th className="hidden px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)] sm:table-cell">
                   Auth
                 </th>
               </tr>
@@ -175,13 +175,13 @@ export default function DashboardPage() {
                   <td className="px-5 py-3 font-mono text-[13px] text-[var(--color-text-secondary)]">
                     {account.email || "?"}
                   </td>
-                  <td className="px-5 py-3 text-[14px] font-medium text-[var(--color-text)]">
+                  <td className="hidden px-5 py-3 text-[14px] font-medium text-[var(--color-text)] sm:table-cell">
                     {account.name}
                   </td>
                   <td className="px-5 py-3">
                     <StatusBadge status={account.status} />
                   </td>
-                  <td className="px-5 py-3 text-[13px] text-[var(--color-text-muted)]">
+                  <td className="hidden px-5 py-3 text-[13px] text-[var(--color-text-muted)] sm:table-cell">
                     {account.auth_type || "oauth"}
                   </td>
                 </tr>
@@ -225,20 +225,22 @@ function StatCard({
   return (
     <div
       ref={ref}
-      className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-5 shadow-[var(--shadow-sm)] transition-shadow duration-200 hover:shadow-[var(--shadow-md)]"
+      className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 shadow-[var(--shadow-sm)] transition-shadow duration-200 hover:shadow-[var(--shadow-md)] sm:p-5"
     >
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-[13px] text-[var(--color-text-secondary)]">{label}</p>
-          <p className="mt-1 text-[26px] font-bold tracking-tight text-[var(--color-text)]">
-            {value}
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-2">
+          <div
+            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] ${color}`}
+          >
+            <Icon size={16} weight="duotone" />
+          </div>
+          <p className="truncate text-[12px] font-medium text-[var(--color-text-secondary)] sm:text-[13px]">
+            {label}
           </p>
         </div>
-        <div
-          className={`flex h-10 w-10 items-center justify-center rounded-[12px] ${color}`}
-        >
-          <Icon size={20} weight="duotone" />
-        </div>
+        <p className="text-[24px] font-bold tracking-tight text-[var(--color-text)] sm:text-[26px]">
+          {value}
+        </p>
       </div>
     </div>
   );

@@ -53,7 +53,7 @@ export default function SettingsPage() {
 
   if (loading) {
     return (
-      <div className="mx-auto max-w-3xl px-6 py-8 pl-16 lg:pl-8">
+      <div className="mx-auto max-w-3xl px-5 pt-14 lg:px-8 lg:pt-8">
         <div className="skeleton mb-3 h-8 w-40 rounded-lg" />
         <div className="skeleton mb-4 h-4 w-64 rounded-lg" />
         <div className="skeleton h-64 rounded-2xl" />
@@ -62,7 +62,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-8 pl-16 lg:pl-8">
+    <div className="mx-auto max-w-3xl px-5 pt-14 lg:px-8 lg:pt-8">
       {/* Header */}
       <div className="mb-8 flex items-center justify-between">
         <div>

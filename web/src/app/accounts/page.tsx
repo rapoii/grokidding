@@ -66,7 +66,7 @@ export default function AccountsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-8 pl-16 lg:pl-8">
+    <div className="mx-auto max-w-5xl px-5 pt-14 lg:px-8 lg:pt-8">
       {/* Header */}
       <div className="mb-8 flex items-center justify-between">
         <div>
