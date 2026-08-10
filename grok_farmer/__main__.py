@@ -1029,7 +1029,7 @@ def _parallel_worker(worker_id, cfg, tcfg, pusher_cfg, email_assignment, dry_run
         solver.close()
 
 
-def _run_parallel(cfg, args, tcfg, pusher, proxy_rotator):
+def _run_parallel(cfg, args, tcfg, pusher, proxy_rotator, farm_state=None):
     """Run farming in parallel with randomized batch sizes.
 
     Flow:
@@ -1037,6 +1037,9 @@ def _run_parallel(cfg, args, tcfg, pusher, proxy_rotator):
     2. Loop: random batch size 1-min(5, remaining), spawn parallel workers
     3. Wait for batch to finish, collect results
     4. Repeat until target count reached
+
+    If farm_state is provided (from web panel), updates progress in real-time
+    and respects stop_requested signal.
     """
     import random
     import threading
@@ -1049,10 +1052,34 @@ def _run_parallel(cfg, args, tcfg, pusher, proxy_rotator):
     pusher_cfg = (cfg["ninrouter"]["base_url"], cfg["ninrouter"]["password"],
                   cfg["ninrouter"].get("db_path"))
 
+    def _update_state(step, email="", completed=None, successful=None, failed=None):
+        """Push progress to web panel FarmState if available."""
+        if not farm_state:
+            return
+        with farm_state.lock:
+            if step:
+                farm_state.current_step = step
+            if email:
+                farm_state.current_email = email
+            if completed is not None:
+                farm_state.completed = completed
+            if successful is not None:
+                farm_state.successful = successful
+            if failed is not None:
+                farm_state.failed = failed
+        farm_state.broadcast_progress()
+
+    def _is_stopped():
+        """Check if user requested stop."""
+        if not farm_state:
+            return False
+        return farm_state.stop_requested
+
     # ── Phase 1: Pre-collect all domains ──
     print(f"\n{'='*60}")
     print(f"  PHASE 1: Pre-collecting {target} unique domains")
     print(f"{'='*60}")
+    _update_state("pre-collecting domains", "")
 
     # Use a temporary browser to pre-collect domains
     pre_browser = TurnstileSolver(
@@ -1069,14 +1096,22 @@ def _run_parallel(cfg, args, tcfg, pusher, proxy_rotator):
 
     if not all_assignments:
         print("  [ERROR] No domains collected. Aborting.")
+        _update_state("error: no domains collected", "", 0, 0, 0)
         return 1
 
     # ── Phase 2: Parallel batches with adaptive sizes ──
     all_results = []
     processed = 0
+    total_success = 0
+    total_failed = 0
     consecutive_success = 0  # Track streak for adaptive sizing
 
     while processed < len(all_assignments):
+        # Check stop signal
+        if _is_stopped():
+            print(f"\n  STOPPED by user after {processed} assignments.")
+            break
+
         remaining = len(all_assignments) - processed
 
         # Adaptive batch sizing: grow on success streak, shrink on failure
@@ -1092,10 +1127,21 @@ def _run_parallel(cfg, args, tcfg, pusher, proxy_rotator):
         batch_size = random.randint(1, max_for_this)
         batch = all_assignments[processed:processed + batch_size]
 
+        batch_num = (processed // max_batch) + 1
         print(f"\n{'='*60}")
         streak_txt = f" streak={consecutive_success}" if consecutive_success > 0 else ""
-        print(f"  BATCH: {batch_size} workers (remaining: {remaining}{streak_txt})")
+        print(f"  BATCH {batch_num}: {batch_size} workers (remaining: {remaining}{streak_txt})")
         print(f"{'='*60}")
+
+        emails_str = ", ".join(f"{u}@{d}" for u, d in batch)
+        _update_state(
+            f"batch {batch_num}: {batch_size} workers ({processed}/{len(all_assignments)})",
+            emails_str,
+            completed=processed,
+            successful=total_success,
+            failed=total_failed,
+        )
+
         for i, (u, d) in enumerate(batch):
             print(f"  [W{i}] {u}@{d}")
 
@@ -1118,10 +1164,32 @@ def _run_parallel(cfg, args, tcfg, pusher, proxy_rotator):
         for t in threads:
             t.join()
 
+        # Check stop again after batch finishes
+        if _is_stopped():
+            print(f"\n  STOPPED by user. Partial results saved.")
+            all_results.extend(batch_results)
+            processed += batch_size
+            batch_success = sum(1 for r in batch_results if r.get('success'))
+            total_success += batch_success
+            total_failed += len(batch_results) - batch_success
+            _update_state("stopped", "", processed, total_success, total_failed)
+            break
+
         all_results.extend(batch_results)
         processed += batch_size
         batch_success = sum(1 for r in batch_results if r.get('success'))
+        batch_failed = len(batch_results) - batch_success
+        total_success += batch_success
+        total_failed += batch_failed
         print(f"\n  Batch done. {batch_success}/{batch_size} success")
+
+        _update_state(
+            f"batch {batch_num} done: {batch_success}/{batch_size}",
+            "",
+            completed=processed,
+            successful=total_success,
+            failed=total_failed,
+        )
 
         # Update streak for adaptive sizing
         if batch_success == batch_size:
@@ -1134,12 +1202,17 @@ def _run_parallel(cfg, args, tcfg, pusher, proxy_rotator):
             cd = getattr(args, 'cooldown', 5)
             if cd > 0:
                 print(f"  Cooldown: {cd}s before next batch...")
-                time.sleep(cd)
+                _update_state(f"cooldown {cd}s", "", processed, total_success, total_failed)
+                for _ in range(cd):
+                    if _is_stopped():
+                        break
+                    time.sleep(1)
 
     success = sum(1 for r in all_results if r.get("success"))
     print(f"\n{'='*60}")
     print(f"  DONE: {success}/{target} accounts created")
     print(f"{'='*60}")
+    _update_state("done", "", processed, success, total_failed)
     return 0 if success > 0 else 1
 
 

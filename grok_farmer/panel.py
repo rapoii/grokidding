@@ -1253,10 +1253,9 @@ def _run_farm(count: int, use_proxy: bool, dry_run: bool, parallel: bool = False
             pusher.login()
             tcfg = cfg["turnstile"]
             args = Namespace(count=count, dry_run=dry_run, cooldown=cooldown)
-            _run_parallel(cfg, args, tcfg, pusher, proxy_rotator)
-            # Update state for UI
-            state.completed = count
-            state.successful = count  # approximate; _run_parallel prints results
+            _run_parallel(cfg, args, tcfg, pusher, proxy_rotator, farm_state=state)
+            # State already updated in real-time by _run_parallel via farm_state
+            state.finish()
             state.broadcast_progress()
             return
 
