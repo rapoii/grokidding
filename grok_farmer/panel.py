@@ -296,13 +296,32 @@ def _load_accounts() -> list[dict]:
             error_code = data.get("errorCode")
             test_status = data.get("testStatus", "unknown")
             is_active = bool(row["isActive"])
-            conn_email = row["email"] or data.get("email", "")
+            # Email can be in row, data, or providerSpecificData
+            psd = data.get("providerSpecificData", {})
+            conn_email = (
+                row["email"]
+                or data.get("email", "")
+                or psd.get("email", "")
+            )
             conn_name = row["name"] or ""
 
             # Check real-time quota status map first (updated by /api/quota)
             quota_info = _quota_status_map.get(conn_email) or _quota_status_map.get(conn_name)
             if quota_info:
-                status = quota_info["status"]
+                q_status = quota_info["status"]
+                # Don't trust stale "error" from quota map if the DB says the
+                # account is active with a valid token. The quota map gets
+                # polluted by transient farming failures (e.g. browser crash,
+                # Turnstile timeout) that don't reflect the actual account
+                # health. Only trust "exhausted"/"expired" from quota (those
+                # are set by real Grok API 429 responses).
+                has_token = bool(
+                    data.get("accessToken") or data.get("refreshToken")
+                )
+                if q_status == "error" and has_token and test_status in ("success", "active"):
+                    status = "active"
+                else:
+                    status = q_status
             elif error_code == 429:
                 status = "exhausted"
             elif error_code:
@@ -316,8 +335,8 @@ def _load_accounts() -> list[dict]:
 
             accounts.append({
                 "id": row["id"],
-                "email": row["email"] or data.get("email", "?"),
-                "name": row["name"] or "?",
+                "email": conn_email or "?",
+                "name": conn_name or "?",
                 "active": is_active,
                 "status": status,
                 "error_code": error_code,
