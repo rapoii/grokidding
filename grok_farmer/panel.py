@@ -174,13 +174,10 @@ def _fetch_quota_sync() -> dict:
             for k, v in GROK_CLI_HEADERS.items():
                 req.add_header(k, v)
             req.add_header("Content-Type", "application/json")
-            resp = urllib.request.urlopen(req, timeout=10)
+            resp = urllib.request.urlopen(req, timeout=3)
             limit = int(resp.headers.get("x-ratelimit-limit-tokens", "1000000"))
             remaining = int(resp.headers.get("x-ratelimit-remaining-tokens", "0"))
             used = limit - remaining
-            total_limit += limit
-            total_remaining += remaining
-            total_used += used
             accounts.append({"name": conn["name"], "email": conn["email"], "status": "active", "limit": limit, "remaining": remaining, "used": used})
         except urllib.error.HTTPError as e:
             if e.code == 429:
@@ -194,33 +191,41 @@ def _fetch_quota_sync() -> dict:
                     if m:
                         usage, limit = int(m.group(1)), int(m.group(2))
                 remaining = max(0, limit - usage)
-                total_limit += limit
-                total_remaining += remaining
-                total_used += usage
                 accounts.append({"name": conn["name"], "email": conn["email"], "status": "expired", "limit": limit, "remaining": remaining, "used": usage})
             else:
                 accounts.append({"name": conn["name"], "email": conn["email"], "status": "error", "limit": 0, "remaining": 0, "used": 0})
         except Exception:
             accounts.append({"name": conn["name"], "email": conn["email"], "status": "error", "limit": 0, "remaining": 0, "used": 0})
 
-    # Build per-account status map for _load_accounts()
-    global _quota_status_map
-    for a in accounts:
-        if a.get("email"):
-            _quota_status_map[a["email"]] = {
-                "status": a["status"],
-                "remaining": a.get("remaining", 0),
-                "limit": a.get("limit", 0),
-                "used": a.get("used", 0),
-            }
-        # Also map by name for connections without email
-        if a.get("name"):
-            _quota_status_map[a["name"]] = {
-                "status": a["status"],
-                "remaining": a.get("remaining", 0),
-                "limit": a.get("limit", 0),
-                "used": a.get("used", 0),
-            }
+    # Build per-account status map for _load_accounts() — thread-safe
+    with _quota_lock:
+        for a in accounts:
+            if a.get("email"):
+                _quota_status_map[a["email"]] = {
+                    "status": a["status"],
+                    "remaining": a.get("remaining", 0),
+                    "limit": a.get("limit", 0),
+                    "used": a.get("used", 0),
+                }
+            # Also map by name for connections without email
+            if a.get("name"):
+                _quota_status_map[a["name"]] = {
+                    "status": a["status"],
+                    "remaining": a.get("remaining", 0),
+                    "limit": a.get("limit", 0),
+                    "used": a.get("used", 0),
+                }
+
+    try:
+        from .usage_db import get_usage
+        db_usage = get_usage()
+        total_limit = sum(u.get("limit_tokens", 0) for u in db_usage)
+        total_used = sum(u.get("used_tokens", 0) for u in db_usage)
+        total_remaining = max(0, total_limit - total_used)
+    except Exception:
+        total_limit = sum(a.get("limit", 0) for a in accounts)
+        total_used = sum(a.get("used", 0) for a in accounts)
+        total_remaining = sum(a.get("remaining", 0) for a in accounts)
 
     return {
         "total_accounts": len(connections),
@@ -234,7 +239,7 @@ def _fetch_quota_sync() -> dict:
 app = FastAPI(title="Grokidding Panel")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "*"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:8090", "http://127.0.0.1:8090"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -669,11 +674,13 @@ def _check_single_connection(token: str) -> dict:
 
 
 def _get_all_grok_connections() -> list[dict]:
-    """Read all grok-cli connections from 9Router SQLite, enriched with local account data."""
+    """Read all grok-cli connections from 9Router SQLite, enriched with local account data.
+    NOTE: Does NOT return passwords. Use _get_connection_credentials() for renew flow.
+    """
     db_path = _get_router_db_path()
     if not db_path or not Path(db_path).exists():
         return []
-    db = sqlite3.connect(db_path)
+    db = sqlite3.connect(f"file:{db_path}?immutable=1", uri=True)
     db.row_factory = sqlite3.Row
     rows = db.execute(
         "SELECT id, name, email, isActive, data FROM providerConnections WHERE provider = 'grok-cli'"
@@ -693,7 +700,6 @@ def _get_all_grok_connections() -> list[dict]:
                 if push.get("id"):
                     local_accounts[push["id"]] = {
                         "email": acct.get("email", ""),
-                        "password": acct.get("password", ""),
                         "file": str(f),
                     }
             except Exception:
@@ -708,11 +714,28 @@ def _get_all_grok_connections() -> list[dict]:
             "id": conn_id,
             "name": r["name"] or "",
             "email": r["email"] or d.get("providerSpecificData", {}).get("email", "") or local.get("email", ""),
-            "password": local.get("password", ""),
             "isActive": bool(r["isActive"]),
             "token": d.get("accessToken", ""),
         })
     return result
+
+
+def _get_connection_credentials(conn_id: str) -> dict:
+    """Get email + password for a specific connection. Internal use only (renew flow)."""
+    from .config import load_config as _lc
+    _cfg = _lc()
+    accounts_dir = Path(_cfg.get("output", {}).get("accounts_dir", "data/accounts/"))
+    if not accounts_dir.exists():
+        return {"email": "", "password": ""}
+    for f in accounts_dir.glob("*.json"):
+        try:
+            acct = json.loads(f.read_text(encoding="utf-8"))
+            push = acct.get("steps", {}).get("push", {}).get("connection", {})
+            if push.get("id") == conn_id:
+                return {"email": acct.get("email", ""), "password": acct.get("password", "")}
+        except Exception:
+            continue
+    return {"email": "", "password": ""}
 
 
 def _delete_xai_account(email: str, password: str) -> dict:
@@ -934,15 +957,18 @@ async def renew_accounts(req: RenewRequest):
     for conn in expired[:count]:
         name = conn["name"] or conn["id"][:12]
 
+        # Get credentials from local account files for x.ai deletion
+        creds = _get_connection_credentials(conn["id"])
+
         # Delete from x.ai first (browser automation)
-        if conn.get("email") and conn.get("password"):
-            state.add_log(f"[RENEW] Deleting x.ai account: {conn['email']}...")
-            result = _delete_xai_account(conn["email"], conn["password"])
+        if creds.get("email") and creds.get("password"):
+            state.add_log(f"[RENEW] Deleting x.ai account: {creds['email']}...")
+            result = _delete_xai_account(creds["email"], creds["password"])
             if result["success"]:
-                deleted_xai.append(conn["email"])
-                state.add_log(f"[RENEW] x.ai account deleted: {conn['email']}")
+                deleted_xai.append(creds["email"])
+                state.add_log(f"[RENEW] x.ai account deleted: {creds['email']}")
             else:
-                state.add_log(f"[RENEW] x.ai delete failed for {conn['email']}: {result['error']}")
+                state.add_log(f"[RENEW] x.ai delete failed for {creds['email']}: {result['error']}")
         else:
             state.add_log(f"[RENEW] No credentials for {name}, skipping x.ai delete")
 
@@ -977,17 +1003,13 @@ import threading as _threading
 _request_log: collections.deque = collections.deque(maxlen=200)
 _request_log_lock = _threading.Lock()
 
-GROK_CLI_HEADERS = {
-    "User-Agent": "grok-shell/0.2.99 (linux; x86_64)",
-    "x-grok-client-identifier": "grok-shell",
-    "x-grok-client-version": "0.2.99",
-}
+# NOTE: GROK_CLI_HEADERS already defined above (line ~616). Do NOT duplicate.
 
 
-def _get_best_token() -> tuple[str, str]:
-    """Pick the connection with most remaining quota. Returns (token, conn_name)."""
+def _get_best_token() -> tuple[str, str, str]:
+    """Pick the connection with most remaining quota. Returns (token, conn_name, email)."""
     connections = _get_all_grok_connections()
-    best_token, best_name, best_remaining = "", "", -1
+    best_token, best_name, best_email, best_remaining = "", "", "", -1
     for conn in connections:
         if not conn["token"]:
             continue
@@ -1008,33 +1030,119 @@ def _get_best_token() -> tuple[str, str]:
                 best_remaining = remaining
                 best_token = conn["token"]
                 best_name = conn["name"]
+                best_email = conn["email"]
         except urllib.error.HTTPError as e:
             # 429 = exhausted, skip
             if e.code == 429:
                 continue
         except Exception:
             continue
-    return best_token, best_name
+    return best_token, best_name, best_email
+
+
+def _safe_db_usage(db_usage: list) -> list:
+    """Filter db_usage fields to only expose non-sensitive data to the frontend."""
+    return [
+        {
+            "account_id": u.get("account_id"),
+            "limit_tokens": u.get("limit_tokens", 0),
+            "used_tokens": u.get("used_tokens", 0),
+            "email": u.get("email", ""),
+        }
+        for u in db_usage
+    ]
 
 
 @app.get("/api/quota")
 async def get_quota(force: bool = False):
     """Return aggregated quota — cached for 30s, non-blocking."""
     now = time.time()
+    
+    try:
+        from .usage_db import update_usage, get_usage
+    except ImportError:
+        get_usage = None
+        update_usage = None
+
+    # Check cache WITHOUT holding lock during I/O
+    use_cache = False
     with _quota_lock:
-        if not force and _quota_cache["data"] and (now - _quota_cache["ts"]) < QUOTA_CACHE_TTL:
+        if not force and _quota_cache["data"] is not None and (now - _quota_cache["ts"]) < QUOTA_CACHE_TTL:
             cached = dict(_quota_cache["data"])
             cached["cached"] = True
-            return JSONResponse(cached)
+            use_cache = True
 
-    # Run blocking Grok API calls in thread pool
-    data = await asyncio.to_thread(_fetch_quota_sync)
-    data["cached"] = False
-    data["ts"] = now
+    if use_cache:
+        # Enrich with DB usage data OUTSIDE lock
+        if get_usage:
+            try:
+                db_usage = get_usage()
+                cached["db_usage"] = _safe_db_usage(db_usage)
+            except Exception:
+                pass
+        return JSONResponse(cached)
+
+    # Run blocking Grok API calls in thread pool with strict timeout
+    try:
+        data = await asyncio.wait_for(asyncio.to_thread(_fetch_quota_sync), timeout=5.0)
+        data["cached"] = False
+        data["ts"] = now
+    except asyncio.TimeoutError:
+        # Fallback to DB if Grok API hangs
+        try:
+            if not get_usage:
+                from .usage_db import get_usage
+            db_usage = get_usage()
+            
+            data = {
+                "accounts": [],
+                "total_limit": sum(u.get("limit_tokens", 0) for u in db_usage),
+                "total_used": sum(u.get("used_tokens", 0) for u in db_usage),
+                "total_remaining": max(0, sum(u.get("limit_tokens", 0) for u in db_usage) - sum(u.get("used_tokens", 0) for u in db_usage)),
+                "total_accounts": len(db_usage),
+                "cached": False,
+                "ts": now,
+                "db_usage": _safe_db_usage(db_usage),
+                "status": "db_fallback"
+            }
+            
+            for row in db_usage:
+                email = row.get("email") or row.get("account_id")
+                limit = row.get("limit_tokens", 0)
+                used = row.get("used_tokens", 0)
+                rem = max(0, limit - used)
+                
+                data["accounts"].append({
+                    "name": row.get("account_id"), 
+                    "email": email, 
+                    "status": "active" if rem > 0 else "expired",
+                    "limit": limit,
+                    "remaining": rem,
+                    "used": used
+                })
+            
+            return JSONResponse(data)
+        except Exception:
+            # Absolute fallback if DB also fails
+            return JSONResponse({"error": "Quota check timed out and DB fallback failed"}, status_code=504)
 
     with _quota_lock:
         _quota_cache["data"] = data
         _quota_cache["ts"] = now
+        
+    # Update DB with new quota
+    try:
+        if not update_usage:
+            from .usage_db import update_usage, get_usage
+        for acc in data.get("accounts", []):
+            if acc.get("email"):
+                update_usage(acc.get("name") or acc.get("email"), acc.get("email"), acc.get("limit", 0), acc.get("used", 0))
+                
+        # Enrich response with DB data
+        db_usage = get_usage()
+        data["db_usage"] = _safe_db_usage(db_usage)
+    except Exception:
+        pass
 
     return JSONResponse(data)
 
@@ -1053,7 +1161,7 @@ async def proxy_grok_responses(request: Request):
     Use this as the base URL in your Grok CLI config to get real-time request logging.
     """
     # Pick best available token
-    token, conn_name = _get_best_token()
+    token, conn_name, conn_email = _get_best_token()
     if not token:
         return JSONResponse({"error": "No available grok-cli connections (all 429 or error)"}, status_code=503)
 
@@ -1107,6 +1215,13 @@ async def proxy_grok_responses(request: Request):
         # Get remaining quota from headers
         remaining = int(proxy_resp.headers.get("x-ratelimit-remaining-tokens", "0"))
         limit = int(proxy_resp.headers.get("x-ratelimit-limit-tokens", "1000000"))
+        
+        # Update database with new usage
+        try:
+            from .usage_db import update_usage
+            update_usage(conn_name, conn_email, limit, limit - remaining)
+        except Exception as e:
+            pass
 
         # Log request
         log_entry = {
@@ -1311,13 +1426,15 @@ def _run_farm(count: int, use_proxy: bool, dry_run: bool, parallel: bool = False
             else:
                 state.failed += 1
                 state.add_log(f"FAILED: {result.get('email', '?')} - {result.get('error', '?')}")
-                # Update quota status map in real-time
+                # Update quota status map in real-time (thread-safe)
                 err = str(result.get('error', ''))
                 email = result.get('email', '')
                 if '429' in err or 'exhausted' in err.lower():
-                    _quota_status_map[email] = {"status": "expired", "remaining": 0, "limit": 500, "used": 500}
+                    with _quota_lock:
+                        _quota_status_map[email] = {"status": "expired", "remaining": 0, "limit": 500, "used": 500}
                 elif email:
-                    _quota_status_map[email] = {"status": "error", "remaining": 0, "limit": 0, "used": 0}
+                    with _quota_lock:
+                        _quota_status_map[email] = {"status": "error", "remaining": 0, "limit": 0, "used": 0}
 
             state.current_email = result.get("email", "")
             state.broadcast_progress()

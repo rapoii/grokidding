@@ -54,6 +54,12 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
 .status-badge.idle{background:var(--surface-alt);color:var(--text2);border:1px solid var(--border)}
 .status-badge.running{background:var(--accent-ghost);color:var(--accent);border:1px solid var(--accent-border)}
 .status-badge.running .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);animation:pulse 1.8s ease infinite}
+.status-badge.red{background:var(--red-ghost);color:var(--red);border:1px solid var(--red-ghost)}
+.status-badge.red .dot{width:8px;height:8px;border-radius:50%;background:var(--red)}
+.status-badge.warning{background:var(--amber-ghost);color:var(--amber);border:1px solid var(--amber-ghost)}
+.status-badge.warning .dot{width:8px;height:8px;border-radius:50%;background:var(--amber)}
+.status-badge.green{background:var(--green-ghost);color:var(--green);border:1px solid var(--green-ghost)}
+.status-badge.green .dot{width:8px;height:8px;border-radius:50%;background:var(--green)}
 .status-badge .dot{width:8px;height:8px;border-radius:50%;background:var(--text3)}
 
 @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.75)}}
@@ -80,6 +86,7 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
 .btn-primary{background:var(--accent);color:#fff}
 .btn-primary:hover{background:var(--accent-hover)}
 .btn-primary:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.btn-disabled{background:var(--text3) !important;color:#fff !important;opacity:.8;cursor:not-allowed;transform:none}
 .btn-ghost{background:var(--surface);color:var(--text2);border:1px solid var(--border)}
 .btn-ghost:hover{border-color:var(--border-strong);color:var(--text)}
 .btn-danger{background:var(--red-ghost);color:var(--red);border:1px solid transparent}
@@ -236,6 +243,10 @@ tbody td{padding:12px 22px;font-size:.85rem}
       <div id="statusBadge" class="status-badge idle">
         <span class="dot"></span>
         <span id="statusText">Idle</span>
+      </div>
+      <div id="quotaStatus" class="status-badge idle" style="display:none;">
+        <span class="dot"></span>
+        <span>Active</span>
       </div>
     </div>
   </div>
@@ -533,13 +544,40 @@ async function fetchQuota() {
 }
 
 function updateQuotaUI(d) {
+  if (d.db_usage) {
+    // Override totals with fast db_usage if available
+    let sum_limit = 0;
+    let sum_used = 0;
+    d.db_usage.forEach(u => {
+      sum_limit += u.limit_tokens || 0;
+      sum_used += u.used_tokens || 0;
+    });
+    d.total_limit = sum_limit;
+    d.total_used = sum_used;
+    d.total_remaining = Math.max(0, sum_limit - sum_used);
+  } else {
+    // Calculate from connections if db_usage is missing
+    if (d.connections) {
+      let sum_limit = 0;
+      let sum_used = 0;
+      d.connections.forEach(c => {
+        if (c.quota) {
+          sum_limit += c.quota.limit || 0;
+          sum_used += c.quota.usage || 0;
+        }
+      });
+      if (d.total_limit === undefined) d.total_limit = sum_limit;
+      if (d.total_used === undefined) d.total_used = sum_used;
+      if (d.total_remaining === undefined) d.total_remaining = Math.max(0, sum_limit - sum_used);
+    }
+  }
   const fmt = (n) => {
     if (n >= 1000000) return (n/1000000).toFixed(1) + 'M';
     if (n >= 1000) return (n/1000).toFixed(0) + 'K';
     return n.toString();
   };
   document.getElementById('quotaTotal').textContent = fmt(d.total_limit);
-  document.getElementById('quotaTotalSub').textContent = d.total_accounts + ' accounts x ' + (d.total_accounts > 0 ? fmt(Math.round(d.total_limit / d.total_accounts)) : '?');
+  document.getElementById('quotaTotalSub').textContent = d.total_accounts + ' accounts x ' + (d.total_accounts > 0 ? fmt(Math.round(d.total_limit / d.total_accounts)) : '0');
   document.getElementById('quotaAccounts').textContent = d.total_accounts + ' accounts';
   document.getElementById('quotaRemaining').textContent = fmt(d.total_remaining);
   const pct = d.total_limit > 0 ? Math.round(d.total_remaining / d.total_limit * 100) : 0;
@@ -548,7 +586,43 @@ function updateQuotaUI(d) {
   document.getElementById('quotaUsedSub').textContent = fmt(d.total_used) + ' queries';
   const bar = document.getElementById('quotaBarFill');
   bar.style.width = pct + '%';
-  bar.style.background = pct > 50 ? 'var(--green)' : pct > 20 ? 'var(--amber)' : 'var(--red)';
+ 
+  const statusEl = document.getElementById('quotaStatus');
+  if (statusEl) {
+    statusEl.style.display = 'inline-flex';
+    const isFarmRunning = document.getElementById('statusBadge').classList.contains('running');
+    if (d.total_remaining <= 0 && d.total_limit > 0) {
+      statusEl.innerHTML = '<span class="dot"></span>Limit Reached';
+      statusEl.className = 'status-badge red';
+      document.getElementById('quotaRemaining').className = 'stat-value red';
+      bar.style.background = 'var(--red)';
+      if (!isFarmRunning) {
+        document.getElementById('btnFarm').disabled = true;
+        document.getElementById('btnFarm').classList.add('btn-disabled');
+        document.getElementById('btnFarmText').textContent = 'Limit Reached';
+      }
+    } else if (pct < 10 && d.total_limit > 0) {
+      statusEl.innerHTML = '<span class="dot"></span>Low Quota';
+      statusEl.className = 'status-badge warning';
+      document.getElementById('quotaRemaining').className = 'stat-value amber';
+      bar.style.background = 'var(--amber)';
+      if (!isFarmRunning) {
+        document.getElementById('btnFarm').disabled = false;
+        document.getElementById('btnFarm').classList.remove('btn-disabled');
+        document.getElementById('btnFarmText').textContent = 'Start Farming';
+      }
+    } else {
+      statusEl.innerHTML = '<span class="dot"></span>Active';
+      statusEl.className = 'status-badge green';
+      document.getElementById('quotaRemaining').className = 'stat-value';
+      bar.style.background = 'var(--accent)';
+      if (!isFarmRunning) {
+        document.getElementById('btnFarm').disabled = false;
+        document.getElementById('btnFarm').classList.remove('btn-disabled');
+        document.getElementById('btnFarmText').textContent = 'Start Farming';
+      }
+    }
+  }
 }
 
 function renderAccounts() {
@@ -613,15 +687,21 @@ function updateFarmUI(data) {
     btn.disabled = true;
     btnText.textContent = `Farming... ${data.progress}%`;
     spinner.style.display = 'block';
-    btnStop.style.display = 'inline-flex';
+    if (btnStop) btnStop.style.display = 'inline-flex';
   } else {
     badge.className = 'status-badge idle';
     text.textContent = data.current_step === 'done' ? 'Complete' : 'Idle';
     btn.classList.remove('running');
-    btn.disabled = false;
-    btnText.textContent = 'Start Farming';
+    // Only re-enable if we are not at quota limit
+    if (!document.getElementById('quotaStatus')?.textContent?.includes('Limit Reached')) {
+      btn.disabled = false;
+      btn.classList.remove('btn-disabled');
+      btnText.textContent = 'Start Farming';
+    } else {
+      btnText.textContent = 'Limit Reached';
+    }
     spinner.style.display = 'none';
-    btnStop.style.display = 'none';
+    if (btnStop) btnStop.style.display = 'none';
   }
 }
 
@@ -794,11 +874,15 @@ async function stopFarm() {
 }
 
 async function startFarm() {
+  const badge = document.getElementById('quotaStatus');
+  if (badge && badge.textContent.includes('Limit Reached')) {
+    addLog('[WARN] Cannot start farming: API rate limit reached across all active accounts. Try again later.');
+    return;
+  }
   const count = parseInt(document.getElementById('farmCount').value) || 1;
   const cooldown = parseInt(document.getElementById('farmCooldown').value) || 0;
   const useProxy = settingsData?.proxy?.mode === 'socks5' || false;
   const parallel = document.getElementById('parallelMode').checked;
-
   try {
     const r = await fetch('/api/farm', {
       method: 'POST',
@@ -884,22 +968,26 @@ function showRenewModal(data) {
 }
 
 function closeRenewModal() {
-  document.getElementById('renewModal').classList.remove('show');
-  renewData = null;
+ document.getElementById('renewModal').classList.remove('show');
+ renewData = null;
 }
-
 async function confirmRenew() {
-  const count = parseInt(document.getElementById('renewCount')?.value) || 0;
-  const btn = document.getElementById('btnConfirmRenew');
-  const spinner = document.getElementById('confirmRenewSpinner');
-  btn.disabled = true;
-  spinner.style.display = 'block';
-
-  try {
-    const r = await fetch('/api/renew', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({count, proxy: settingsData?.proxy?.mode === 'socks5'})
+  const badge = document.getElementById('quotaStatus');
+  if (badge && badge.textContent.includes('Limit Reached')) {
+    addLog('[WARN] Cannot renew: API rate limit reached across all active accounts. Try again later.');
+    closeRenewModal();
+    return;
+  }
+ const count = parseInt(document.getElementById('renewCount')?.value) || 0;
+ const btn = document.getElementById('btnConfirmRenew');
+ const spinner = document.getElementById('confirmRenewSpinner');
+ btn.disabled = true;
+ spinner.style.display = 'block';
+ try {
+   const r = await fetch('/api/renew', {
+     method: 'POST',
+     headers: {'Content-Type': 'application/json'},
+     body: JSON.stringify({count, proxy: settingsData?.proxy?.mode === 'socks5'})
     });
     const d = await r.json();
     if (!r.ok) {
