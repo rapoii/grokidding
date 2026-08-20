@@ -506,7 +506,7 @@ class GeneratorEmailReader:
                             # Try clicking into email if OTP not in list HTML
                             if not page_code:
                                 items = re.findall(
-                                    r'onclick=["\']loadInboxClientSide\(["\']([^"\']+)["\'])["\']',
+                                    r'onclick=["\']loadInboxClientSide\(["\']([^"\']+)["\']\)["\']',
                                     page_html
                                 )
                                 if not items:
@@ -561,7 +561,7 @@ class GeneratorEmailReader:
 
                             # Try clicking into email
                             items = re.findall(
-                                r'onclick=["\']loadInboxClientSide\(["\']([^"\']+)["\'])["\']',
+                                r'onclick=["\']loadInboxClientSide\(["\']([^"\']+)["\']\)["\']',
                                 page_html
                             )
                             if not items:
