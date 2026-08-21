@@ -1,6 +1,43 @@
+# Configuration & Secrets
 config.json
+*.env
+.env
+.env.*
+!.env.example
+grok_farmer/.env.example
+
+# Data & Database & Logs
 data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.log
+logs/
+
+# Python & Build artifacts
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 *.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# CodeGraph & IDE
+.codegraph/
+.vscode/
+.idea/
+*.swp
+*.bak
+
+# Temporary / Internal plans
 PLAN.md
+screenshot*.png
+
+# Web Node & Next.js Build (if applicable)
+web/node_modules/
+web/.next/
+web/.env*
+!web/.env.example
+web/*.tsbuildinfo
