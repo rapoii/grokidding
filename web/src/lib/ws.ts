@@ -1,15 +1,14 @@
 /* ── Grokidding WebSocket Client ── */
 
-import type { WSMessage, FarmStatus } from "./types";
+import type { WSMessage, FarmStatus, QuotaData } from "./types";
 
 type WSCallbacks = {
   onLog?: (line: string) => void;
   onProgress?: (data: FarmStatus) => void;
+  onQuota?: (data: QuotaData) => void;
   onConnect?: () => void;
   onDisconnect?: () => void;
 };
-
-import Cookies from "js-cookie";
 
 export class GrokWS {
   private ws: WebSocket | null = null;
@@ -23,8 +22,7 @@ export class GrokWS {
   constructor(callbacks: WSCallbacks) {
     // WebSocket URL derived from current page origin
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const token = Cookies.get("auth_token") || "";
-    this.url = `${proto}//${window.location.host}/ws?token=${token}`;
+    this.url = `${proto}//${window.location.host}/ws`;
     this.callbacks = callbacks;
   }
 
@@ -49,6 +47,9 @@ export class GrokWS {
             case "progress":
               this.callbacks.onProgress?.(msg.data);
               break;
+            case "quota":
+              this.callbacks.onQuota?.(msg.data);
+              break;
           }
         } catch {
           // ignore parse errors
@@ -58,8 +59,6 @@ export class GrokWS {
       this.ws.onclose = () => {
         this.ws = null;
         this.callbacks.onDisconnect?.();
-        // Guard: jangan reconnect jika sudah di-destroy (component unmount)
-        if (this.destroyed) return;
         this.scheduleReconnect();
       };
 

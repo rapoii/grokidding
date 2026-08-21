@@ -6,6 +6,7 @@ import type {
   FarmStatus,
   FarmRequest,
   SessionHistory,
+  QuotaData,
   Settings,
   LogResponse,
 } from "./types";
@@ -13,22 +14,13 @@ import type {
 // Use relative URLs — Next.js rewrites proxy to FastAPI backend
 const BASE = "";
 
-import Cookies from "js-cookie";
-
-export async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = Cookies.get("auth_token");
-  const headers: HeadersInit = {
-    "Content-Type": "application/json",
-    ...init?.headers,
-  };
-  
-  if (token) {
-    (headers as Record<string, string>)["Authorization"] = `Bearer ${token}`;
-  }
-
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     ...init,
-    headers,
+    headers: {
+      "Content-Type": "application/json",
+      ...init?.headers,
+    },
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -76,6 +68,16 @@ export async function getLogs(limit = 200): Promise<LogResponse> {
   return request(`/api/logs?limit=${limit}`);
 }
 
+// ── Quota ──
+
+export async function checkQuota(): Promise<QuotaData> {
+  return request("/api/check-quota");
+}
+
+export async function getQuota(force = false): Promise<QuotaData> {
+  return request(`/api/quota?force=${force}`);
+}
+
 // ── Sessions ──
 
 export async function getSessions(limit = 20): Promise<{ sessions: SessionHistory[] }> {
@@ -99,37 +101,6 @@ export async function updateSettings(data: Settings): Promise<{ ok: boolean }> {
 
 export async function renewAccounts(): Promise<{ renewed: number; failed: number; errors: string[] }> {
   return request("/api/renew", { method: "POST", body: JSON.stringify({}) });
-}
-
-// ── Auth ──
-
-export async function login(
-  username: string,
-  password: string
-): Promise<{ ok: boolean; error?: string }> {
-  try {
-    const res = await fetch(`/api/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      return { ok: false, error: body.error || body.detail || `HTTP ${res.status}` };
-    }
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : "Network error" };
-  }
-}
-
-export async function logout(): Promise<{ ok: boolean }> {
-  try {
-    await fetch("/api/auth/logout", { method: "POST" });
-    return { ok: true };
-  } catch {
-    return { ok: false };
-  }
 }
 
 // ── Proxy Test ──

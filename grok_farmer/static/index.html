@@ -1,1188 +1,1152 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="h-full">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Grokidding</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Lora:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<style>
-*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
-:root{
-  --bg:#f5f4ee;
-  --surface:#ffffff;
-  --surface-alt:#faf9f5;
-  --border:#e8e6dd;
-  --border-strong:#d8d5c9;
-  --text:#1a1a1a;
-  --text2:#6b6b6b;
-  --text3:#9a9a8e;
-  --accent:#d97757;
-  --accent-hover:#c4684a;
-  --accent-ghost:rgba(217,119,87,.08);
-  --accent-border:rgba(217,119,87,.25);
-  --green:#5e9c5e;
-  --green-ghost:rgba(94,156,94,.1);
-  --red:#c25450;
-  --red-ghost:rgba(194,84,80,.08);
-  --amber:#c4882b;
-  --blue:#5b7ea0;
-  --amber-ghost:rgba(196,136,43,.1);
-  --radius:12px;
-  --radius-sm:8px;
-  --shadow:0 1px 3px rgba(0,0,0,.04), 0 1px 2px rgba(0,0,0,.02);
-  --shadow-hover:0 4px 12px rgba(0,0,0,.06), 0 1px 3px rgba(0,0,0,.04);
-  --font:'Lora',Georgia,'Times New Roman',serif;
-  --sans:system-ui,-apple-system,'Segoe UI',sans-serif;
-  --mono:'JetBrains Mono','Cascadia Code',monospace;
-}
-html{font-size:15px}
-body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:100vh;line-height:1.55}
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Grokidding — Workspace Automation</title>
+  
+  <!-- Fonts: Geist / SF Pro style typography + JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Geist', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'monospace'],
+          },
+          colors: {
+            canvas: '#FBFBFA',
+            surface: '#FFFFFF',
+            'surface-alt': '#F7F6F3',
+            border: '#EAEAEA',
+            'border-strong': '#D8D5C9',
+            'text-primary': '#111111',
+            'text-secondary': '#666666',
+            'text-muted': '#8E8E93',
+            accent: '#D97757',
+            'accent-hover': '#C4684A',
+            'accent-ghost': 'rgba(217,119,87,0.08)',
+            'accent-border': 'rgba(217,119,87,0.22)',
+            status: {
+              active: '#10B981',
+              'active-bg': '#ECFDF5',
+              'active-border': '#A7F3D0',
+              exhausted: '#F59E0B',
+              'exhausted-bg': '#FFFBEB',
+              'exhausted-border': '#FDE68A',
+              error: '#EF4444',
+              'error-bg': '#FEF2F2',
+              'error-border': '#FECACA',
+            }
+          },
+          boxShadow: {
+            'subtle': '0 1px 2px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.02)',
+            'card-hover': '0 4px 12px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0, 0, 0, 0.02)',
+            'dropdown': '0 10px 25px -5px rgba(0, 0, 0, 0.06), 0 8px 10px -6px rgba(0, 0, 0, 0.04)',
+          }
+        }
+      }
+    }
+  </script>
 
-::-webkit-scrollbar{width:6px;height:6px}
-::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:3px}
-::-webkit-scrollbar-thumb:hover{background:var(--text3)}
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
 
-.container{max-width:1100px;margin:0 auto;padding:32px 24px}
+  <!-- GSAP for lightweight 60fps micro-animations -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
 
-.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:32px;padding-bottom:24px;border-bottom:1px solid var(--border)}
-.header h1{font-family:var(--font);font-size:1.6rem;font-weight:600;letter-spacing:-.01em;display:flex;align-items:center;gap:12px}
-.header h1 .logo{width:36px;height:36px;background:var(--accent);border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;font-family:var(--sans);font-size:1rem;font-weight:700;color:#fff}
-.status-badge{display:inline-flex;align-items:center;gap:8px;padding:7px 16px;border-radius:999px;font-size:.8rem;font-weight:500;transition:all .25s ease}
-.status-badge.idle{background:var(--surface-alt);color:var(--text2);border:1px solid var(--border)}
-.status-badge.running{background:var(--accent-ghost);color:var(--accent);border:1px solid var(--accent-border)}
-.status-badge.running .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);animation:pulse 1.8s ease infinite}
-.status-badge.red{background:var(--red-ghost);color:var(--red);border:1px solid var(--red-ghost)}
-.status-badge.red .dot{width:8px;height:8px;border-radius:50%;background:var(--red)}
-.status-badge.warning{background:var(--amber-ghost);color:var(--amber);border:1px solid var(--amber-ghost)}
-.status-badge.warning .dot{width:8px;height:8px;border-radius:50%;background:var(--amber)}
-.status-badge.green{background:var(--green-ghost);color:var(--green);border:1px solid var(--green-ghost)}
-.status-badge.green .dot{width:8px;height:8px;border-radius:50%;background:var(--green)}
-.status-badge .dot{width:8px;height:8px;border-radius:50%;background:var(--text3)}
+  <!-- Alpine.js -->
+  <script defer src="https://unpkg.com/alpinejs@3.14.8/dist/cdn.min.js"></script>
 
-@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.75)}}
-@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
-@keyframes slideIn{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:translateX(0)}}
+  <style>
+    [x-cloak] { display: none !important; }
+    
+    /* Performance: GPU compositing for fast animation on low-end devices */
+    .gpu-layer {
+      will-change: transform, opacity;
+      transform: translateZ(0);
+    }
 
-@media(prefers-reduced-motion:reduce){
-  *{animation-duration:.01ms!important;transition-duration:.01ms!important}
-}
+    /* Custom Slim Scrollbars */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #E5E5E5; border-radius: 999px; }
+    ::-webkit-scrollbar-thumb:hover { background: #D1D5DB; }
 
-.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:28px}
-.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:22px;transition:all .2s ease;animation:fadeIn .4s ease;box-shadow:var(--shadow)}
-.stat-card:hover{box-shadow:var(--shadow-hover);transform:translateY(-1px)}
-.stat-label{font-size:.72rem;font-weight:500;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
-.stat-value{font-family:var(--font);font-size:1.8rem;font-weight:600;letter-spacing:-.02em}
-.stat-value.green{color:var(--green)}
-.stat-value.amber{color:var(--amber)}
-.stat-value.red{color:var(--red)}
-.stat-value.accent{color:var(--accent)}
-
-.controls{display:flex;align-items:center;gap:12px;margin-bottom:24px;flex-wrap:wrap}
-.btn{display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:999px;font-family:var(--sans);font-size:.85rem;font-weight:500;border:none;cursor:pointer;transition:all .2s ease}
-.btn:active{transform:scale(.97)}
-.btn-primary{background:var(--accent);color:#fff}
-.btn-primary:hover{background:var(--accent-hover)}
-.btn-primary:disabled{opacity:.5;cursor:not-allowed;transform:none}
-.btn-disabled{background:var(--text3) !important;color:#fff !important;opacity:.8;cursor:not-allowed;transform:none}
-.btn-ghost{background:var(--surface);color:var(--text2);border:1px solid var(--border)}
-.btn-ghost:hover{border-color:var(--border-strong);color:var(--text)}
-.btn-danger{background:var(--red-ghost);color:var(--red);border:1px solid transparent}
-.btn-danger:hover{background:var(--red);color:#fff}
-.btn-warning{background:var(--amber-ghost);color:var(--amber);border:1px solid transparent}
-.btn-warning:hover{background:var(--amber);color:#fff}
-.btn-warning:disabled{opacity:.5;cursor:not-allowed;transform:none}
-.btn-sm{padding:5px 12px;font-size:.75rem}
-
-.input-num{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 14px;color:var(--text);font-family:var(--sans);font-size:.85rem;width:80px;text-align:center;transition:border-color .2s}
-.input-num:focus{outline:none;border-color:var(--accent)}
-.input-label{font-size:.82rem;color:var(--text2);margin-right:4px;font-weight:500}
-
-.toggle-switch{display:inline-flex;align-items:center;gap:8px}
-.toggle-switch label{font-size:.82rem;color:var(--text2);font-weight:500;cursor:pointer}
-.toggle{position:relative;width:40px;height:22px;cursor:pointer}
-.toggle input{opacity:0;width:0;height:0}
-.toggle-slider{position:absolute;inset:0;background:var(--border-strong);border-radius:999px;transition:all .25s ease}
-.toggle-slider:before{content:'';position:absolute;width:18px;height:18px;left:2px;top:2px;background:#fff;border-radius:50%;transition:all .25s ease;box-shadow:0 1px 3px rgba(0,0,0,.15)}
-.toggle input:checked+.toggle-slider{background:var(--accent)}
-.toggle input:checked+.toggle-slider:before{transform:translateX(18px)}
-
-.spinner{width:16px;height:16px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;display:none}
-.btn-primary.running .spinner{display:block}
-@keyframes spin{to{transform:rotate(360deg)}}
-
-.table-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:24px;box-shadow:var(--shadow);animation:fadeIn .5s ease}
-.table-header{display:flex;align-items:center;justify-content:space-between;padding:16px 22px;border-bottom:1px solid var(--border)}
-.table-header h2{font-family:var(--font);font-size:1.05rem;font-weight:600}
-.table-header .count{font-size:.75rem;color:var(--text3);background:var(--surface-alt);padding:3px 10px;border-radius:999px}
-
-table{width:100%;border-collapse:collapse}
-thead th{text-align:left;padding:10px 22px;font-size:.7rem;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);background:var(--surface-alt)}
-tbody tr{border-bottom:1px solid var(--border);transition:background .15s}
-tbody tr:last-child{border-bottom:none}
-tbody tr:hover{background:var(--surface-alt)}
-tbody td{padding:12px 22px;font-size:.85rem}
-.email-cell{font-weight:500;color:var(--text)}
-.badge{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;font-size:.7rem;font-weight:600}
-.badge-success{background:var(--green-ghost);color:var(--green)}
-.badge-fail{background:var(--red-ghost);color:var(--red)}
-.badge-pending{background:var(--amber-ghost);color:var(--amber)}
-.empty-state{text-align:center;padding:48px 20px;color:var(--text3)}
-.empty-state .icon{font-size:2rem;margin-bottom:8px;opacity:.4}
-
-.log-panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow);animation:fadeIn .6s ease}
-.log-header{display:flex;align-items:center;justify-content:space-between;padding:14px 22px;border-bottom:1px solid var(--border)}
-.log-header h2{font-family:var(--font);font-size:1.05rem;font-weight:600}
-.log-header .live-dot{width:8px;height:8px;border-radius:50%;background:var(--green);animation:pulse 1.8s ease infinite}
-.log-body{height:380px;overflow-y:auto;padding:14px 18px;font-family:var(--mono);font-size:.76rem;line-height:1.85;background:var(--surface-alt)}
-.log-line{color:var(--text2);animation:slideIn .2s ease}
-.log-line .ts{color:var(--text3);margin-right:6px}
-.log-line.success{color:var(--green)}
-.log-line.error{color:var(--red)}
-.log-line.info{color:var(--accent)}
-.log-line.warn{color:var(--amber)}
-.log-line.muted{color:var(--text3);font-style:italic}
-.log-line .tag{display:inline-block;padding:1px 6px;border-radius:4px;font-size:.68rem;font-weight:700;margin-right:5px;background:var(--border)}
-.log-line.success .tag{background:rgba(94,156,94,.15);color:var(--green)}
-.log-line.error .tag{background:rgba(194,84,80,.15);color:var(--red)}
-.log-line.warn .tag{background:rgba(196,136,43,.15);color:var(--amber)}
-.log-line.info .tag{background:rgba(217,119,87,.15);color:var(--accent)}
-.log-line .step{color:var(--accent);font-weight:700}
-.log-line .email{color:var(--blue);text-decoration:none}
-.log-line .num{color:var(--accent);font-weight:700}
-.log-line.banner{text-align:center;color:var(--accent);border-top:1px solid var(--border);border-bottom:1px solid var(--border);padding:3px 0;margin:4px 0;font-weight:600;background:rgba(217,119,87,.04)}
-.log-line.divider{color:var(--border);letter-spacing:-1px;text-align:center}
-
-@media(max-width:768px){
-  .stats{grid-template-columns:repeat(2,1fr)}
-  .controls{flex-direction:column;align-items:stretch}
-  table{font-size:.8rem}
-  thead th,tbody td{padding:8px 12px}
-}
-
-.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);backdrop-filter:blur(4px);z-index:1000;align-items:center;justify-content:center}
-.modal-overlay.show{display:flex}
-.modal{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:28px;max-width:520px;width:90%;box-shadow:var(--shadow-hover);animation:fadeIn .2s ease}
-.modal h3{font-family:var(--font);font-size:1.15rem;font-weight:600;margin-bottom:12px;display:flex;align-items:center;gap:8px}
-.modal p{color:var(--text2);font-size:.85rem;line-height:1.6;margin-bottom:8px}
-.modal .quota-list{max-height:200px;overflow-y:auto;margin:12px 0;padding:8px;background:var(--surface-alt);border-radius:var(--radius-sm);border:1px solid var(--border)}
-.modal .quota-item{display:flex;justify-content:space-between;align-items:center;padding:6px 8px;font-size:.8rem;border-bottom:1px solid var(--border)}
-.modal .quota-item:last-child{border-bottom:none}
-.modal .quota-item .status-dot{width:8px;height:8px;border-radius:50%;margin-right:8px;flex-shrink:0}
-.modal .quota-item .status-dot.expired{background:var(--red)}
-.modal .quota-item .status-dot.active{background:var(--green)}
-.modal .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}
-.modal .count-input{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;color:var(--text);font-family:var(--sans);font-size:.85rem;width:60px;text-align:center}
-.modal .count-label{font-size:.8rem;color:var(--text3);margin-right:6px}
-
-.quota-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;font-size:.65rem;font-weight:600}
-.quota-ok{background:var(--green-ghost);color:var(--green)}
-.quota-warn{background:var(--amber-ghost);color:var(--amber)}
-.quota-dead{background:var(--red-ghost);color:var(--red)}
-
-.quota-panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:24px;box-shadow:var(--shadow);animation:fadeIn .5s ease}
-.quota-header{display:flex;align-items:center;justify-content:space-between;padding:16px 22px;border-bottom:1px solid var(--border)}
-.quota-header h2{font-family:var(--font);font-size:1.05rem;font-weight:600}
-.quota-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;padding:20px}
-.quota-metric{text-align:center}
-.quota-metric .label{font-size:.7rem;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
-.quota-metric .value{font-family:var(--font);font-size:1.4rem;font-weight:600}
-.quota-metric .sub{font-size:.7rem;color:var(--text3);margin-top:2px}
-.quota-bar{height:6px;background:var(--surface-alt);border-radius:3px;margin:0 20px 16px;overflow:hidden}
-.quota-bar-fill{height:100%;border-radius:3px;transition:width .6s ease}
-
-.settings-btn{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 14px;color:var(--text2);font-family:var(--sans);font-size:.8rem;font-weight:500;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:all .2s}
-.settings-btn:hover{border-color:var(--accent);color:var(--accent)}
-.modal-settings{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);width:600px;max-height:85vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:var(--shadow-hover);animation:fadeIn .3s ease}
-.modal-settings h3{font-family:var(--font);font-size:1.15rem;font-weight:600;padding:20px 24px 0;margin-bottom:16px}
-.settings-tabs{display:flex;gap:4px;padding:0 24px;border-bottom:1px solid var(--border)}
-.settings-tab{padding:10px 16px;font-size:.8rem;font-weight:500;color:var(--text3);cursor:pointer;border-bottom:2px solid transparent;transition:all .2s}
-.settings-tab:hover{color:var(--text)}
-.settings-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
-.settings-body{padding:20px 24px;overflow-y:auto;flex:1}
-.settings-section{display:none}
-.settings-section.active{display:block}
-.field{margin-bottom:16px}
-.field label{display:block;font-size:.72rem;font-weight:500;color:var(--text3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px}
-.field input,.field select,.field textarea{width:100%;background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 14px;color:var(--text);font-family:var(--sans);font-size:.85rem;transition:border-color .2s}
-.field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--accent)}
-.field select{cursor:pointer}
-.field textarea{resize:vertical;min-height:60px}
-.field-row{display:flex;gap:12px;align-items:flex-end}
-.field-row .field{flex:1}
-.field-row .btn{margin-bottom:16px}
-.toggle-row{display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border)}
-.toggle-row:last-child{border-bottom:none}
-.toggle-label{font-size:.85rem;font-weight:500}
-.toggle-desc{font-size:.75rem;color:var(--text3);margin-top:2px}
-.proxy-list{list-style:none;margin:12px 0}
-.proxy-item{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:6px;font-size:.8rem;font-family:var(--mono);transition:all .2s}
-.proxy-item:hover{border-color:var(--border-strong)}
-.proxy-item .ip{color:var(--accent)}
-.proxy-item .remove{color:var(--red);cursor:pointer;padding:2px 6px;border-radius:4px;font-size:.7rem}
-.proxy-item .remove:hover{background:var(--red-ghost)}
-.proxy-test{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:.8rem}
-.proxy-test.ok{color:var(--green)}
-.proxy-test.err{color:var(--red)}
-.proxy-test.testing{color:var(--amber)}
-.settings-footer{display:flex;justify-content:flex-end;gap:10px;padding:16px 24px;border-top:1px solid var(--border)}
-</style>
+    /* Low-end motion reduction guard */
+    @media (prefers-reduced-motion: reduce) {
+      * {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
 </head>
-<body>
-<div class="container">
+<body 
+  x-data="grokApp()" 
+  x-init="init()" 
+  class="h-full bg-canvas text-text-primary antialiased font-sans flex flex-col selection:bg-accent/15 selection:text-accent selection:font-semibold"
+>
 
-  <div class="header">
-    <h1><span class="logo">G</span> Grokidding</h1>
-    <div style="display:flex;align-items:center;gap:12px">
-      <button class="settings-btn" onclick="openSettings()">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-        Settings
-      </button>
-      <div id="statusBadge" class="status-badge idle">
-        <span class="dot"></span>
-        <span id="statusText">Idle</span>
-      </div>
-      <div id="quotaStatus" class="status-badge idle" style="display:none;">
-        <span class="dot"></span>
-        <span>Active</span>
-      </div>
-    </div>
+  <!-- Ambient Light Orbs (Optimized for low-end GPU) -->
+  <div class="fixed inset-0 pointer-events-none overflow-hidden z-0 opacity-40">
+    <div class="absolute -top-24 -left-24 w-96 h-96 rounded-full bg-orange-100/40 blur-3xl"></div>
+    <div class="absolute top-1/3 -right-24 w-80 h-80 rounded-full bg-amber-50/50 blur-3xl"></div>
   </div>
 
-  <div class="stats">
-    <div class="stat-card">
-      <div class="stat-label">Total Connections</div>
-      <div class="stat-value accent" id="statTotal">0</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Active</div>
-      <div class="stat-value green" id="statActive">0</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Exhausted</div>
-      <div class="stat-value amber" id="statExhausted">0</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Health Rate</div>
-      <div class="stat-value" id="statRate">0%</div>
-    </div>
-  </div>
+  <!-- Top Navigation Bar -->
+  <header class="sticky top-0 z-30 bg-surface/85 backdrop-blur-md border-b border-border transition-colors duration-200">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
+      <!-- Left: Logo & Brand -->
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-accent text-white flex items-center justify-center font-bold text-sm shadow-sm transition-transform active:scale-95">
+          G
+        </div>
+        <div class="flex flex-col">
+          <div class="flex items-center gap-2">
+            <span class="font-semibold text-sm tracking-tight text-text-primary">Grokidding</span>
+            <span class="text-[11px] font-medium text-text-muted px-1.5 py-0.5 rounded bg-surface-alt border border-border">v1.2.0</span>
+          </div>
+          <span class="text-[11px] text-text-secondary hidden sm:inline">xAI & 9Router Pool Automation</span>
+        </div>
+      </div>
 
-  <div class="quota-panel" id="quotaPanel">
-    <div class="quota-header">
-      <h2>Query Quota</h2>
-      <span style="font-size:.75rem;color:var(--text3)" id="quotaAccounts">0 accounts</span>
-    </div>
-    <div class="quota-grid">
-      <div class="quota-metric">
-        <div class="label">Total Limit</div>
-        <div class="value accent" id="quotaTotal">0</div>
-        <div class="sub" id="quotaTotalSub">0 accounts x 1M</div>
-      </div>
-      <div class="quota-metric">
-        <div class="label">Remaining</div>
-        <div class="value green" id="quotaRemaining">0</div>
-        <div class="sub" id="quotaRemainingSub">0% available</div>
-      </div>
-      <div class="quota-metric">
-        <div class="label">Used (24h)</div>
-        <div class="value" id="quotaUsed" style="color:var(--text)">0</div>
-        <div class="sub" id="quotaUsedSub">0 queries</div>
-      </div>
-    </div>
-    <div class="quota-bar">
-      <div class="quota-bar-fill" id="quotaBarFill" style="width:0%;background:var(--green)"></div>
-    </div>
-  </div>
+      <!-- Right: Real-time Status Badge & Controls -->
+      <div class="flex items-center gap-2 sm:gap-3">
+        <!-- Status Indicator Pill -->
+        <div 
+          class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-all duration-200"
+          :class="farmState.running ? 'bg-amber-50 text-amber-700 border-amber-200/80 animate-pulse' : 'bg-surface-alt text-text-secondary border-border'"
+        >
+          <span 
+            class="w-2 h-2 rounded-full"
+            :class="farmState.running ? 'bg-amber-500' : 'bg-emerald-500'"
+          ></span>
+          <span x-text="farmState.running ? `Farming: ${farmState.completed}/${farmState.total}` : 'Idle (Ready)'" class="text-[11px]"></span>
+        </div>
 
-  <div class="controls">
-    <span class="input-label">Count:</span>
-    <input type="number" id="farmCount" class="input-num" value="1" min="1" max="50">
-    <span class="input-label" style="margin-left:8px">Cooldown:</span>
-    <input type="number" id="farmCooldown" class="input-num" value="5" min="0" max="300" title="Seconds between accounts (sequential) or batches (parallel). 0 = no cooldown">
-    <span style="font-size:.72rem;color:var(--text3)">s</span>
-    <div class="toggle-switch">
-      <label for="parallelMode">Parallel</label>
-      <div class="toggle">
-        <input type="checkbox" id="parallelMode">
-        <span class="toggle-slider"></span>
-      </div>
-    </div>
-    <button id="btnFarm" class="btn btn-primary" onclick="startFarm()">
-      <span class="spinner" id="farmSpinner"></span>
-      <span id="btnFarmText">Start Farming</span>
-    </button>
-    <button id="btnStop" class="btn btn-ghost" onclick="stopFarm()" style="display:none">
-      Stop
-    </button>
-    <button id="btnRenew" class="btn btn-warning" onclick="checkAndRenew()">
-      <span class="spinner" id="renewSpinner"></span>
-      <span id="btnRenewText">Renew</span>
-    </button>
-    <button class="btn btn-ghost" onclick="refreshAll()">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
-      Refresh
-    </button>
-  </div>
+        <!-- Refresh Button -->
+        <button 
+          @click="refreshData()" 
+          class="p-2 rounded-lg text-text-secondary hover:text-text-primary hover:bg-surface-alt border border-border transition-all active:scale-95"
+          title="Refresh All Data"
+          aria-label="Refresh Data"
+        >
+          <i data-lucide="rotate-cw" class="w-4 h-4" :class="isRefreshing ? 'animate-spin' : ''"></i>
+        </button>
 
-  <div class="table-wrap">
-    <div class="table-header">
-      <h2>Accounts</h2>
-      <span class="count" id="accountCount">0 accounts</span>
-    </div>
-    <div id="tableBody">
-      <div class="empty-state">
-        <div class="icon">📭</div>
-        <div>No accounts yet. Start farming to create accounts.</div>
+        <!-- Settings Button -->
+        <button 
+          @click="openSettingsModal()" 
+          class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-text-primary bg-surface border border-border hover:bg-surface-alt shadow-subtle transition-all active:scale-95"
+        >
+          <i data-lucide="sliders-horizontal" class="w-3.5 h-3.5 text-text-muted"></i>
+          <span class="hidden sm:inline">Settings</span>
+        </button>
       </div>
     </div>
-  </div>
+  </header>
 
-  <div class="log-panel">
-    <div class="log-header">
-      <h2>Live Logs</h2>
-      <div class="live-dot"></div>
-    </div>
-    <div class="log-body" id="logBody">
-      <div class="log-line info">Waiting for activity...</div>
-    </div>
-    <div class="log-footer" style="display:flex;justify-content:space-between;align-items:center;padding:8px 18px;border-top:1px solid var(--border)">
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-sm" onclick="toggleSessions()">📊 Session History</button>
-        <button class="btn btn-sm" onclick="exportLogs()">💾 Export Logs</button>
-      </div>
-      <span id="logCount" style="font-size:.7rem;color:var(--text3)">0 lines</span>
-    </div>
-  </div>
+  <!-- Main Content Wrapper -->
+  <main class="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 py-6 space-y-6 z-10">
 
-  <div id="sessionsPanel" style="display:none">
-    <div class="log-panel">
-      <div class="log-header">
-        <h2>Session History</h2>
-        <button class="btn btn-sm" onclick="toggleSessions()">✕ Close</button>
+    <!-- Stat Cards Grid -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4" id="statsContainer">
+      <!-- Total -->
+      <div class="stat-card bg-surface p-4 sm:p-5 rounded-xl border border-border shadow-subtle hover:shadow-card-hover transition-all duration-200">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-[11px] uppercase tracking-wider font-semibold text-text-muted">Total Pool</span>
+          <i data-lucide="layers" class="w-4 h-4 text-text-muted"></i>
+        </div>
+        <div class="text-2xl sm:text-3xl font-bold tracking-tight text-text-primary font-mono" x-text="stats.total">0</div>
+        <p class="text-[11px] text-text-secondary mt-1">9Router Connections</p>
       </div>
-      <div id="sessionsBody" style="padding:14px 18px;max-height:300px;overflow-y:auto">
-        <div style="color:var(--text3);font-size:.8rem">Loading...</div>
+
+      <!-- Active -->
+      <div class="stat-card bg-surface p-4 sm:p-5 rounded-xl border border-border shadow-subtle hover:shadow-card-hover transition-all duration-200">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-[11px] uppercase tracking-wider font-semibold text-emerald-600">Active</span>
+          <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-500"></i>
+        </div>
+        <div class="text-2xl sm:text-3xl font-bold tracking-tight text-emerald-600 font-mono" x-text="stats.active">0</div>
+        <p class="text-[11px] text-text-secondary mt-1">Ready for Inference</p>
+      </div>
+
+      <!-- Exhausted -->
+      <div class="stat-card bg-surface p-4 sm:p-5 rounded-xl border border-border shadow-subtle hover:shadow-card-hover transition-all duration-200">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-[11px] uppercase tracking-wider font-semibold text-amber-600">Exhausted</span>
+          <i data-lucide="clock-alert" class="w-4 h-4 text-amber-500"></i>
+        </div>
+        <div class="text-2xl sm:text-3xl font-bold tracking-tight text-amber-600 font-mono" x-text="stats.exhausted">0</div>
+        <p class="text-[11px] text-text-secondary mt-1">Awaiting Reset / Renew</p>
+      </div>
+
+      <!-- Health Rate -->
+      <div class="stat-card bg-surface p-4 sm:p-5 rounded-xl border border-border shadow-subtle hover:shadow-card-hover transition-all duration-200">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-[11px] uppercase tracking-wider font-semibold text-text-muted">Health Rate</span>
+          <i data-lucide="activity" class="w-4 h-4 text-accent"></i>
+        </div>
+        <div class="text-2xl sm:text-3xl font-bold tracking-tight text-text-primary font-mono" x-text="`${stats.rate}%`">0%</div>
+        <p class="text-[11px] text-text-secondary mt-1">Pool Availability</p>
       </div>
     </div>
-  </div>
 
-  <div class="modal-overlay" id="settingsModal">
-    <div class="modal-settings">
-      <h3>Settings</h3>
-      <div class="settings-tabs">
-        <div class="settings-tab active" onclick="switchSettingsTab('proxy')">IP Rotation</div>
-        <div class="settings-tab" onclick="switchSettingsTab('email')">Email</div>
-        <div class="settings-tab" onclick="switchSettingsTab('router')">9Router</div>
+    <!-- Farming Controls & Action Bar -->
+    <div class="bg-surface rounded-xl border border-border shadow-subtle p-4 sm:p-5 transition-all">
+      <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        
+        <!-- Left: Form Inputs -->
+        <div class="flex flex-wrap items-center gap-3 sm:gap-4">
+          <!-- Count -->
+          <div class="flex items-center gap-2">
+            <label class="text-xs font-semibold text-text-secondary">Target:</label>
+            <input 
+              type="number" 
+              x-model.number="farmForm.count" 
+              min="1" 
+              max="100" 
+              :disabled="farmState.running"
+              class="w-16 px-2.5 py-1.5 bg-surface-alt border border-border rounded-lg text-xs font-mono text-center text-text-primary focus:outline-none focus:border-accent transition-colors disabled:opacity-50"
+            >
+            <span class="text-xs text-text-muted">accounts</span>
+          </div>
+
+          <div class="h-4 w-px bg-border hidden sm:block"></div>
+
+          <!-- Cooldown -->
+          <div class="flex items-center gap-2">
+            <label class="text-xs font-semibold text-text-secondary">Cooldown:</label>
+            <input 
+              type="number" 
+              x-model.number="farmForm.cooldown" 
+              min="0" 
+              max="300" 
+              :disabled="farmState.running"
+              class="w-16 px-2.5 py-1.5 bg-surface-alt border border-border rounded-lg text-xs font-mono text-center text-text-primary focus:outline-none focus:border-accent transition-colors disabled:opacity-50"
+            >
+            <span class="text-xs text-text-muted">sec</span>
+          </div>
+
+          <div class="h-4 w-px bg-border hidden sm:block"></div>
+
+          <!-- Parallel Toggle -->
+          <label class="flex items-center gap-2 cursor-pointer select-none">
+            <input 
+              type="checkbox" 
+              x-model="farmForm.parallel" 
+              :disabled="farmState.running"
+              class="w-4 h-4 text-accent rounded border-border focus:ring-accent accent-accent disabled:opacity-50"
+            >
+            <span class="text-xs font-semibold text-text-primary">Parallel Mode (1–5 Workers)</span>
+          </label>
+
+          <!-- Dry Run Toggle -->
+          <label class="flex items-center gap-2 cursor-pointer select-none text-text-secondary hover:text-text-primary">
+            <input 
+              type="checkbox" 
+              x-model="farmForm.dryRun" 
+              :disabled="farmState.running"
+              class="w-4 h-4 rounded border-border focus:ring-accent accent-accent disabled:opacity-50"
+            >
+            <span class="text-xs">Dry Run</span>
+          </label>
+        </div>
+
+        <!-- Right: Action Buttons -->
+        <div class="flex items-center gap-2 pt-2 lg:pt-0 border-t lg:border-t-0 border-border">
+          <!-- Start Button -->
+          <template x-if="!farmState.running">
+            <button 
+              @click="startFarming()" 
+              class="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold text-white bg-accent hover:bg-accent-hover shadow-sm transition-all active:scale-95"
+            >
+              <i data-lucide="play" class="w-3.5 h-3.5 fill-current"></i>
+              <span>Start Farming</span>
+            </button>
+          </template>
+
+          <!-- Stop Button -->
+          <template x-if="farmState.running">
+            <button 
+              @click="stopFarming()" 
+              class="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 shadow-sm transition-all active:scale-95"
+            >
+              <i data-lucide="square" class="w-3.5 h-3.5 fill-current"></i>
+              <span>Stop Farming</span>
+            </button>
+          </template>
+
+          <!-- Renew Expired Button -->
+          <button 
+            @click="openRenewModal()" 
+            class="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-amber-800 bg-amber-500/10 border border-amber-500/20 hover:bg-amber-500/15 transition-all active:scale-95"
+            title="Scan and replace expired accounts"
+          >
+            <i data-lucide="sparkles" class="w-3.5 h-3.5 text-amber-600"></i>
+            <span>Renew Accounts</span>
+          </button>
+        </div>
       </div>
-      <div class="settings-body">
-        <div class="settings-section active" id="tab-proxy">
-          <div class="field">
-            <label>IP Rotation Mode</label>
-            <select id="proxyMode" onchange="onRotationModeChange()">
-              <option value="off">Off - Tidak rotasi IP</option>
-              <option value="socks5">Proxy - Rotasi via proxy pool (SOCKS5/4, HTTP, HTTPS)</option>
-              <option value="adb">ADB Airplane Mode - Rotasi via HP</option>
+
+      <!-- Real-time Progress Bar (visible when running) -->
+      <div x-show="farmState.running" x-transition class="mt-4 pt-3.5 border-t border-border">
+        <div class="flex items-center justify-between text-xs mb-1.5">
+          <span class="font-medium text-text-primary" x-text="`Processing: ${farmState.current_email || 'Initializing worker...'}`"></span>
+          <span class="font-mono text-text-secondary" x-text="`${farmState.progress}% (${farmState.completed}/${farmState.total})`"></span>
+        </div>
+        <div class="w-full h-1.5 bg-surface-alt rounded-full overflow-hidden border border-border/40">
+          <div 
+            class="h-full bg-accent transition-all duration-300 rounded-full"
+            :style="`width: ${farmState.progress}%`"
+          ></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Two-Column Layout: Accounts Table & Live Logs -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+      <!-- Left Column: Accounts Table (7 cols) -->
+      <div class="lg:col-span-7 space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <h2 class="text-sm font-semibold text-text-primary">Connections & Accounts</h2>
+            <span class="text-[11px] font-mono font-medium px-2 py-0.5 rounded-full bg-surface-alt border border-border text-text-secondary" x-text="`${accounts.length} total`"></span>
+          </div>
+          
+          <div class="flex items-center gap-2">
+            <!-- Search Filter -->
+            <input 
+              type="text" 
+              x-model="searchQuery" 
+              placeholder="Search email/name..." 
+              class="px-2.5 py-1 text-xs bg-surface border border-border rounded-lg focus:outline-none focus:border-accent text-text-primary placeholder:text-text-muted w-36 sm:w-48 transition-colors"
+            >
+          </div>
+        </div>
+
+        <div class="bg-surface rounded-xl border border-border shadow-subtle overflow-hidden">
+          
+          <!-- Desktop Table View (>= sm) -->
+          <div class="hidden sm:block max-h-[460px] overflow-y-auto">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead class="sticky top-0 bg-surface-alt/95 backdrop-blur border-b border-border z-10">
+                <tr>
+                  <th class="py-2.5 px-3.5 font-semibold text-text-muted uppercase tracking-wider text-[10px]">Email / Connection</th>
+                  <th class="py-2.5 px-3 font-semibold text-text-muted uppercase tracking-wider text-[10px]">Status</th>
+                  <th class="py-2.5 px-3 font-semibold text-text-muted uppercase tracking-wider text-[10px]">Auth</th>
+                  <th class="py-2.5 px-3.5 font-semibold text-text-muted uppercase tracking-wider text-[10px] text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-border/60 font-mono">
+                <template x-for="acc in filteredAccounts" :key="acc.id">
+                  <tr class="hover:bg-surface-alt/60 transition-colors">
+                    <td class="py-2.5 px-3.5">
+                      <div class="font-medium text-text-primary truncate max-w-[240px]" x-text="acc.email || acc.name || 'Unnamed'"></div>
+                      <div class="text-[10px] text-text-muted truncate max-w-[200px]" x-text="acc.id"></div>
+                    </td>
+                    <td class="py-2.5 px-3">
+                      <span 
+                        class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-sans font-medium border"
+                        :class="getStatusBadgeClass(acc.status)"
+                        x-text="formatStatus(acc.status)"
+                      ></span>
+                    </td>
+                    <td class="py-2.5 px-3 text-text-secondary text-[11px]" x-text="acc.auth_type || 'oauth'"></td>
+                    <td class="py-2.5 px-3.5 text-right">
+                      <button 
+                        @click="deleteAccount(acc.id)"
+                        class="px-2.5 py-1 text-[11px] font-sans font-medium text-rose-600 hover:text-white hover:bg-rose-600 border border-rose-200 hover:border-transparent rounded-lg transition-all active:scale-95"
+                        title="Deactivate account in 9Router"
+                      >
+                        Deactivate
+                      </button>
+                    </td>
+                  </tr>
+                </template>
+
+                <template x-if="filteredAccounts.length === 0">
+                  <tr>
+                    <td colspan="4" class="py-12 text-center text-text-muted font-sans text-xs">
+                      No matching accounts found.
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Mobile Card List View (< sm) - Thumb-friendly & Anti-clipping -->
+          <div class="block sm:hidden max-h-[460px] overflow-y-auto divide-y divide-border/60 p-1">
+            <template x-for="acc in filteredAccounts" :key="acc.id">
+              <div class="p-3 hover:bg-surface-alt/50 transition-colors space-y-2">
+                <div class="flex items-start justify-between gap-2">
+                  <div class="min-w-0 flex-1">
+                    <div class="font-medium text-xs text-text-primary truncate font-mono" x-text="acc.email || acc.name || 'Unnamed'"></div>
+                    <div class="text-[10px] text-text-muted truncate font-mono mt-0.5" x-text="acc.id"></div>
+                  </div>
+                  <span 
+                    class="shrink-0 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border"
+                    :class="getStatusBadgeClass(acc.status)"
+                    x-text="formatStatus(acc.status)"
+                  ></span>
+                </div>
+                
+                <div class="flex items-center justify-between pt-1 border-t border-border/40 text-[11px]">
+                  <span class="text-text-muted text-[10px]">Auth: <span class="text-text-secondary font-mono" x-text="acc.auth_type || 'oauth'"></span></span>
+                  <button 
+                    @click="deleteAccount(acc.id)"
+                    class="px-2.5 py-1 text-[11px] font-medium text-rose-600 hover:bg-rose-50 border border-rose-200 rounded-md transition-all active:scale-95"
+                  >
+                    Deactivate
+                  </button>
+                </div>
+              </div>
+            </template>
+
+            <template x-if="filteredAccounts.length === 0">
+              <div class="py-12 text-center text-text-muted text-xs">
+                No matching accounts found.
+              </div>
+            </template>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Right Column: Live Logs & Session History (5 cols) -->
+      <div class="lg:col-span-5 space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <h2 class="text-sm font-semibold text-text-primary">Live Activity Logs</h2>
+            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          </div>
+
+          <div class="flex items-center gap-1.5">
+            <button 
+              @click="toggleSessionHistory()" 
+              class="px-2 py-1 text-[11px] font-medium text-text-secondary hover:text-text-primary bg-surface border border-border rounded-lg hover:bg-surface-alt transition-colors"
+            >
+              <span x-text="showSessions ? 'Live Logs' : 'History'"></span>
+            </button>
+            <button 
+              @click="exportLogs()" 
+              class="p-1 text-text-secondary hover:text-text-primary bg-surface border border-border rounded-lg hover:bg-surface-alt transition-colors"
+              title="Export Logs"
+            >
+              <i data-lucide="download" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- Terminal Log Box -->
+        <div class="bg-[#111113] text-[#E4E4E7] rounded-xl border border-neutral-800 shadow-subtle p-3.5 font-mono text-xs h-[460px] flex flex-col">
+          
+          <!-- Terminal Header / Info -->
+          <div class="flex items-center justify-between pb-2 mb-2 border-b border-neutral-800 text-[11px] text-neutral-400">
+            <div class="flex items-center gap-1.5">
+              <span class="w-2.5 h-2.5 rounded-full bg-red-500/80 inline-block"></span>
+              <span class="w-2.5 h-2.5 rounded-full bg-yellow-500/80 inline-block"></span>
+              <span class="w-2.5 h-2.5 rounded-full bg-green-500/80 inline-block"></span>
+              <span class="ml-2" x-text="showSessions ? 'session_history.db' : 'farming_stream.log'"></span>
+            </div>
+            <span class="text-[10px] text-neutral-400 font-semibold" x-text="`${logs.length} lines`"></span>
+          </div>
+
+          <!-- Logs Content Scroll View -->
+          <div 
+            x-show="!showSessions" 
+            id="logContainer"
+            class="flex-1 overflow-y-auto space-y-1 pr-1 text-[11px] leading-relaxed selection:bg-neutral-700"
+          >
+            <template x-for="(line, idx) in logs" :key="idx">
+              <div 
+                class="break-words"
+                :class="getLogLineClass(line)"
+                x-html="highlightLog(line)"
+              ></div>
+            </template>
+            <template x-if="logs.length === 0">
+              <div class="text-neutral-500 italic py-4 text-center">Ready. Logs will stream here during operation.</div>
+            </template>
+          </div>
+
+          <!-- Session History View -->
+          <div 
+            x-show="showSessions" 
+            class="flex-1 overflow-y-auto space-y-2 pr-1 text-[11px]"
+          >
+            <template x-for="s in sessions" :key="s.id">
+              <div class="p-2.5 rounded bg-neutral-900/80 border border-neutral-800 space-y-1">
+                <div class="flex items-center justify-between text-neutral-300">
+                  <span class="font-bold text-amber-400" x-text="`Session ${s.id}`"></span>
+                  <span class="text-[10px] text-neutral-400 font-semibold" x-text="formatDate(s.started_at)"></span>
+                </div>
+                <div class="flex items-center gap-3 text-[10px] text-neutral-400">
+                  <span>Total: <strong class="text-neutral-200" x-text="s.total"></strong></span>
+                  <span>Success: <strong class="text-emerald-400" x-text="s.successful"></strong></span>
+                  <span>Failed: <strong class="text-rose-400" x-text="s.failed"></strong></span>
+                  <span x-show="s.duration" x-text="`${s.duration}s`"></span>
+                </div>
+              </div>
+            </template>
+            <template x-if="sessions.length === 0">
+              <div class="text-neutral-500 italic py-4 text-center">No session history recorded yet.</div>
+            </template>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- Clean Single-Line Footer -->
+  <footer class="mt-auto border-t border-border/60 bg-surface/50 py-4 px-4 text-center z-10">
+    <p class="text-[11px] text-text-muted">
+      © <span x-text="new Date().getFullYear()"></span> Grokidding Automation. All rights reserved. Dikembangkan oleh rapoi.
+    </p>
+  </footer>
+
+  <!-- SETTINGS MODAL DIALOG -->
+  <div 
+    x-show="settingsModalOpen" 
+    x-cloak 
+    class="fixed inset-0 z-50 flex items-center justify-center p-4"
+    @keydown.escape.window="closeSettingsModal()"
+  >
+    <!-- Backdrop -->
+    <div 
+      x-show="settingsModalOpen" 
+      x-transition:enter="transition ease-out duration-150"
+      x-transition:enter-start="opacity-0"
+      x-transition:enter-end="opacity-100"
+      x-transition:leave="transition ease-in duration-100"
+      x-transition:leave-start="opacity-100"
+      x-transition:leave-end="opacity-0"
+      class="fixed inset-0 bg-neutral-950/40 backdrop-blur-[2px]"
+      @click="closeSettingsModal()"
+    ></div>
+
+    <!-- Modal Box -->
+    <div 
+      x-show="settingsModalOpen" 
+      x-transition:enter="transition ease-out duration-150"
+      x-transition:enter-start="opacity-0 scale-95"
+      x-transition:enter-end="opacity-100 scale-100"
+      x-transition:leave="transition ease-in duration-100"
+      x-transition:leave-start="opacity-100 scale-100"
+      x-transition:leave-end="opacity-0 scale-95"
+      class="relative w-full max-w-lg bg-surface rounded-2xl border border-border shadow-2xl overflow-hidden z-10 max-h-[90vh] flex flex-col"
+    >
+      <!-- Modal Header -->
+      <div class="px-5 py-4 border-b border-border flex items-center justify-between">
+        <h3 class="font-semibold text-sm text-text-primary">System Settings</h3>
+        <button @click="closeSettingsModal()" class="p-1 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-alt">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+      <!-- Settings Tab Switcher -->
+      <div class="px-5 pt-3 border-b border-border bg-surface-alt/40 flex gap-2 text-xs">
+        <button 
+          @click="activeSettingsTab = 'proxy'"
+          class="pb-2.5 px-2 border-b-2 font-medium transition-colors"
+          :class="activeSettingsTab === 'proxy' ? 'border-accent text-accent' : 'border-transparent text-text-secondary hover:text-text-primary'"
+        >
+          IP Rotation
+        </button>
+        <button 
+          @click="activeSettingsTab = 'email'"
+          class="pb-2.5 px-2 border-b-2 font-medium transition-colors"
+          :class="activeSettingsTab === 'email' ? 'border-accent text-accent' : 'border-transparent text-text-secondary hover:text-text-primary'"
+        >
+          Email & IMAP
+        </button>
+        <button 
+          @click="activeSettingsTab = 'router'"
+          class="pb-2.5 px-2 border-b-2 font-medium transition-colors"
+          :class="activeSettingsTab === 'router' ? 'border-accent text-accent' : 'border-transparent text-text-secondary hover:text-text-primary'"
+        >
+          9Router
+        </button>
+      </div>
+
+      <!-- Settings Body -->
+      <div class="p-5 overflow-y-auto space-y-4 text-xs flex-1">
+        
+        <!-- Tab 1: Proxy / IP Rotation -->
+        <div x-show="activeSettingsTab === 'proxy'" class="space-y-4">
+          <div>
+            <label class="block font-semibold text-text-primary mb-1">Rotation Mode</label>
+            <select 
+              x-model="settingsForm.proxyMode" 
+              class="w-full px-3 py-2 bg-surface-alt border border-border rounded-lg text-xs text-text-primary focus:outline-none focus:border-accent"
+            >
+              <option value="off">Off — Direct IP (No Proxy)</option>
+              <option value="socks5">Proxy Pool — SOCKS5/HTTP</option>
+              <option value="adb">ADB — USB Android Airplane Mode</option>
             </select>
           </div>
-          <div id="offModeWarning" style="display:none;margin-top:12px;padding:12px 14px;background:var(--amber-ghost);border:1px solid var(--amber);border-radius:var(--radius-sm);font-size:.8rem;color:var(--amber);line-height:1.5">
-            <strong style="display:block;margin-bottom:4px">⚠ Mode Off - Tidak Ada Rotasi IP</strong>
-            Browser akan jalan dengan IP asli kamu (hotspot/WiFi). xAI bisa blokir OTP setelah 3-4 signup dari IP yang sama. Mode ini cocok untuk testing atau bikin 1-2 akun saja.
-          </div>
-          <div id="proxyPoolSection" style="display:none;margin-top:16px">
-            <div class="field">
-              <label>Proxy Pool</label>
-              <ul class="proxy-list" id="proxyList"></ul>
-            </div>
-            <div class="field-row">
-              <div class="field">
-                <label>Tambah Proxy</label>
-                <input type="text" id="proxyNewInput" placeholder="socks5:// atau http://user:pass@host:port">
-              </div>
-              <button class="btn btn-ghost" onclick="addProxy()">+</button>
-            </div>
-            <button class="btn btn-ghost btn-sm" onclick="testProxy()">Test Proxy</button>
-            <div class="proxy-test" id="proxyTestResult"></div>
-          </div>
-          <div id="adbSection" style="display:none;margin-top:16px">
-            <div class="field">
-              <label>ADB Path</label>
-              <input type="text" id="adbPath" placeholder="C:/path/to/adb.exe atau adb (jika di PATH)">
-            </div>
-            <div class="field">
-              <label>Device Serial</label>
-              <input type="text" id="adbSerial" placeholder="Serial dari adb devices">
-            </div>
-            <button class="btn btn-ghost btn-sm" onclick="testAdb()">Test ADB Connection</button>
-            <div class="proxy-test" id="adbTestResult"></div>
-          </div>
-        </div>
-        <div class="settings-section" id="tab-email">
-          <div class="field">
-            <label>IMAP Host</label>
-            <input type="text" id="emailHost" placeholder="imap.servermu.com">
-          </div>
-          <div class="field-row">
-            <div class="field">
-              <label>IMAP Port</label>
-              <input type="number" id="emailPort" value="993">
-            </div>
-            <div class="field">
-              <label>Email</label>
-              <input type="email" id="emailAddr" placeholder="otp@domainmu.com">
-            </div>
-          </div>
-          <div class="field">
-            <label>Password</label>
-            <input type="password" id="emailPass" placeholder="••••••••">
-          </div>
-          <div class="field">
-            <label>Domain (untuk generate email)</label>
-            <input type="text" id="emailDomain" placeholder="domainmu.com">
-          </div>
-        </div>
-        <div class="settings-section" id="tab-router">
-          <div class="field">
-            <label>Base URL</label>
-            <input type="text" id="routerUrl" placeholder="https://router.example.com">
-          </div>
-          <div class="field">
-            <label>Password</label>
-            <input type="password" id="routerPass" placeholder="••••••••">
-          </div>
-          <div class="field">
-            <label>SQLite DB Path</label>
-            <input type="text" id="routerDbPath" placeholder="Path ke 9Router SQLite">
-          </div>
-        </div>
-      </div>
-      <div class="settings-footer">
-        <button class="btn btn-ghost" onclick="closeSettings()">Cancel</button>
-        <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
-      </div>
-    </div>
-  </div>
 
-  <div class="modal-overlay" id="renewModal">
-    <div class="modal">
-      <h3>Renew Expired Accounts</h3>
-      <div id="renewContent">
-        <p>Checking quota...</p>
+          <!-- Warning for Off Mode -->
+          <div x-show="settingsForm.proxyMode === 'off'" class="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-800 text-[11px] leading-relaxed">
+            <strong>Notice:</strong> Running in direct IP mode. Suitable for testing or generating small batches.
+          </div>
+
+          <!-- Proxy Pool Section -->
+          <div x-show="settingsForm.proxyMode === 'socks5'" class="space-y-3">
+            <label class="block font-semibold text-text-primary">Proxy Pool List</label>
+            <div class="space-y-1.5 max-h-32 overflow-y-auto border border-border rounded-lg p-2 bg-surface-alt">
+              <template x-for="(p, i) in settingsForm.proxyPool" :key="i">
+                <div class="flex items-center justify-between text-[11px] font-mono py-1 px-2 bg-surface rounded border border-border/40">
+                  <span class="truncate" x-text="p"></span>
+                  <button @click="removeProxy(i)" class="text-rose-500 hover:text-rose-700 ml-2">✕</button>
+                </div>
+              </template>
+              <template x-if="settingsForm.proxyPool.length === 0">
+                <div class="text-text-muted italic text-center py-2 text-[11px]">No proxies added.</div>
+              </template>
+            </div>
+
+            <div class="flex gap-2">
+              <input 
+                type="text" 
+                x-model="newProxyUrl" 
+                placeholder="socks5://user:pass@host:port" 
+                class="flex-1 px-3 py-1.5 bg-surface border border-border rounded-lg text-xs font-mono text-text-primary focus:outline-none focus:border-accent"
+              >
+              <button @click="addProxy()" class="px-3 py-1.5 bg-surface-alt border border-border hover:bg-surface text-text-primary rounded-lg font-medium text-xs">
+                Add
+              </button>
+            </div>
+
+            <button @click="testProxyConnection()" class="text-xs text-accent hover:underline font-medium">
+              Test Proxy Connectivity
+            </button>
+            <div x-show="proxyTestStatus" class="text-[11px] font-mono" :class="proxyTestStatus.ok ? 'text-emerald-600' : 'text-rose-600'" x-text="proxyTestStatus.msg"></div>
+          </div>
+
+          <!-- ADB Section -->
+          <div x-show="settingsForm.proxyMode === 'adb'" class="space-y-3">
+            <div>
+              <label class="block font-semibold text-text-primary mb-1">ADB Path</label>
+              <input type="text" x-model="settingsForm.adbPath" placeholder="adb.exe" class="w-full px-3 py-2 bg-surface border border-border rounded-lg text-xs font-mono">
+            </div>
+            <div>
+              <label class="block font-semibold text-text-primary mb-1">Device Serial</label>
+              <input type="text" x-model="settingsForm.adbSerial" placeholder="Device serial ID" class="w-full px-3 py-2 bg-surface border border-border rounded-lg text-xs font-mono">
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 2: Email Config -->
+        <div x-show="activeSettingsTab === 'email'" class="space-y-3">
+          <div>
+            <label class="block font-semibold text-text-primary mb-1">IMAP Host</label>
+            <input type="text" x-model="settingsForm.emailHost" placeholder="imap.mail.com" class="w-full px-3 py-2 bg-surface border border-border rounded-lg text-xs font-mono">
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block font-semibold text-text-primary mb-1">IMAP Port</label>
+              <input type="number" x-model.number="settingsForm.emailPort" class="w-full px-3 py-2 bg-surface border border-border rounded-lg text-xs font-mono">
+            </div>
+            <div>
+              <label class="block font-semibold text-text-primary mb-1">Domain</label>
+              <input type="text" x-model="settingsForm.emailDomain" placeholder="example.com" class="w-full px-3 py-2 bg-surface border border-border rounded-lg text-xs font-mono">
+            </div>
+          </div>
+          <div>
+            <label class="block font-semibold text-text-primary mb-1">Email Account</label>
+            <input type="text" x-model="settingsForm.emailAddr" placeholder="user@example.com" class="w-full px-3 py-2 bg-surface border border-border rounded-lg text-xs font-mono">
+          </div>
+        </div>
+
+        <!-- Tab 3: 9Router Config -->
+        <div x-show="activeSettingsTab === 'router'" class="space-y-3">
+          <div>
+            <label class="block font-semibold text-text-primary mb-1">9Router Base URL</label>
+            <input type="text" x-model="settingsForm.routerUrl" placeholder="http://localhost:20128" class="w-full px-3 py-2 bg-surface border border-border rounded-lg text-xs font-mono">
+          </div>
+          <div>
+            <label class="block font-semibold text-text-primary mb-1">SQLite DB Path</label>
+            <input type="text" x-model="settingsForm.routerDbPath" placeholder="Path to data.sqlite" class="w-full px-3 py-2 bg-surface border border-border rounded-lg text-xs font-mono">
+          </div>
+        </div>
+
       </div>
-      <div class="actions">
-        <button class="btn btn-ghost" onclick="closeRenewModal()">Cancel</button>
-        <button class="btn btn-warning" id="btnConfirmRenew" onclick="confirmRenew()">
-          <span class="spinner" id="confirmRenewSpinner"></span>
-          Renew Accounts
+
+      <!-- Modal Footer -->
+      <div class="px-5 py-3 border-t border-border bg-surface-alt/40 flex justify-end gap-2">
+        <button @click="closeSettingsModal()" class="px-3.5 py-1.5 rounded-lg text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-surface-alt transition-colors">
+          Cancel
+        </button>
+        <button @click="saveSettings()" class="px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-accent hover:bg-accent-hover transition-all shadow-sm">
+          Save Changes
         </button>
       </div>
     </div>
   </div>
 
-</div>
+  <!-- RENEW ACCOUNTS MODAL -->
+  <div 
+    x-show="renewModalOpen" 
+    x-cloak 
+    class="fixed inset-0 z-50 flex items-center justify-center p-4"
+    @keydown.escape.window="renewModalOpen = false"
+  >
+    <div class="fixed inset-0 bg-neutral-950/40 backdrop-blur-[2px]" @click="renewModalOpen = false"></div>
+    <div class="relative w-full max-w-md bg-surface rounded-2xl border border-border shadow-2xl p-5 z-10 space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="font-semibold text-sm text-text-primary">Renew Expired Accounts</h3>
+        <button @click="renewModalOpen = false" class="p-1 text-text-muted hover:text-text-primary">✕</button>
+      </div>
+      
+      <p class="text-xs text-text-secondary leading-relaxed">
+        Sistem akan otomatis menghapus akun yang exhausted/expired dari 9Router dan membuatkan akun pengganti baru secara otomatis.
+      </p>
 
-<script>
-let ws = null;
-let accounts = [];
+      <div class="flex items-center gap-3">
+        <label class="text-xs font-semibold text-text-secondary">Jumlah Renew:</label>
+        <input 
+          type="number" 
+          x-model.number="renewCount" 
+          min="1" 
+          class="w-20 px-3 py-1.5 bg-surface-alt border border-border rounded-lg text-xs font-mono text-center"
+        >
+      </div>
 
-function connectWS() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(`${proto}//${location.host}/ws`);
-  ws.onmessage = (e) => {
-    try {
-      const msg = JSON.parse(e.data);
-      if (msg.type === 'progress') updateFarmUI(msg.data);
-      if (msg.type === 'log') addLog(msg.line);
-      if (msg.type === 'quota') updateQuotaUI(msg.data);
-    } catch {}
-  };
-  ws.onclose = () => setTimeout(connectWS, 3000);
-  ws.onerror = () => {};
-  setInterval(() => { if (ws?.readyState === 1) ws.send('ping'); }, 30000);
-}
+      <div class="pt-3 border-t border-border flex justify-end gap-2">
+        <button @click="renewModalOpen = false" class="px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary">Cancel</button>
+        <button @click="executeRenew()" class="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-semibold text-xs transition-all shadow-sm">
+          Confirm Renew
+        </button>
+      </div>
+    </div>
+  </div>
 
-async function fetchStats() {
-  try {
-    const r = await fetch('/api/stats');
-    const d = await r.json();
-    document.getElementById('statTotal').textContent = d.total;
-    document.getElementById('statActive').textContent = d.active;
-    document.getElementById('statExhausted').textContent = d.exhausted;
-    document.getElementById('statRate').textContent = d.rate + '%';
-    if (d.farm) updateFarmUI(d.farm);
-  } catch {}
-}
+  <!-- Main Alpine JavaScript Logic -->
+  <script>
+    function grokApp() {
+      return {
+        // State
+        stats: { total: 0, active: 0, exhausted: 0, rate: 0 },
+        accounts: [],
+        logs: [],
+        sessions: [],
+        searchQuery: '',
+        showSessions: false,
+        isRefreshing: false,
+        
+        // Farm Form & State
+        farmForm: {
+          count: 5,
+          cooldown: 5,
+          parallel: true,
+          dryRun: false,
+        },
+        farmState: {
+          running: false,
+          total: 0,
+          completed: 0,
+          progress: 0,
+          current_email: '',
+        },
 
-async function fetchAccounts() {
-  try {
-    const r = await fetch('/api/accounts');
-    accounts = await r.json();
-    renderAccounts();
-  } catch {}
-}
+        // Modals
+        settingsModalOpen: false,
+        activeSettingsTab: 'proxy',
+        settingsForm: {
+          proxyMode: 'off',
+          proxyPool: [],
+          adbPath: '',
+          adbSerial: '',
+          emailHost: '',
+          emailPort: 993,
+          emailAddr: '',
+          emailDomain: '',
+          routerUrl: '',
+          routerDbPath: '',
+        },
+        newProxyUrl: '',
+        proxyTestStatus: null,
+        renewModalOpen: false,
+        renewCount: 5,
+        ws: null,
 
-async function fetchLogs() {
-  try {
-    const r = await fetch('/api/logs');
-    const d = await r.json();
-    const logBody = document.getElementById('logBody');
-    logBody.innerHTML = '';
-    const lines = [...(d.file_logs || []), ...(d.panel_logs || [])];
-    lines.slice(-100).forEach(l => addLog(l, false));
-    logBody.scrollTop = logBody.scrollHeight;
-  } catch {}
-}
+        // Computed
+        get filteredAccounts() {
+          if (!this.searchQuery) return this.accounts;
+          const q = this.searchQuery.toLowerCase();
+          return this.accounts.filter(a => 
+            (a.email && a.email.toLowerCase().includes(q)) ||
+            (a.name && a.name.toLowerCase().includes(q)) ||
+            (a.id && a.id.toLowerCase().includes(q))
+          );
+        },
 
-async function fetchQuota() {
-  try {
-    const r = await fetch('/api/quota');
-    if (!r.ok) return;
-    updateQuotaUI(await r.json());
-  } catch {}
-}
+        // Init Lifecycle
+        init() {
+          this.fetchStats();
+          this.fetchAccounts();
+          this.fetchLogs();
+          this.fetchSettings();
+          this.connectWebSocket();
 
-function updateQuotaUI(d) {
-  if (d.db_usage) {
-    // Override totals with fast db_usage if available
-    let sum_limit = 0;
-    let sum_used = 0;
-    d.db_usage.forEach(u => {
-      sum_limit += u.limit_tokens || 0;
-      sum_used += u.used_tokens || 0;
-    });
-    d.total_limit = sum_limit;
-    d.total_used = sum_used;
-    d.total_remaining = Math.max(0, sum_limit - sum_used);
-  } else {
-    // Calculate from connections if db_usage is missing
-    if (d.connections) {
-      let sum_limit = 0;
-      let sum_used = 0;
-      d.connections.forEach(c => {
-        if (c.quota) {
-          sum_limit += c.quota.limit || 0;
-          sum_used += c.quota.usage || 0;
+          // Initialize Lucide Icons
+          this.$nextTick(() => {
+            if (window.lucide) window.lucide.createIcons();
+            this.animateCards();
+          });
+        },
+
+        animateCards() {
+          if (window.gsap && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+            gsap.fromTo('.stat-card', 
+              { y: 8, opacity: 0 }, 
+              { y: 0, opacity: 1, duration: 0.25, stagger: 0.05, ease: 'power2.out' }
+            );
+          }
+        },
+
+        // WebSocket
+        connectWebSocket() {
+          const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+          this.ws = new WebSocket(`${proto}//${location.host}/ws`);
+          
+          this.ws.onmessage = (e) => {
+            try {
+              const msg = JSON.parse(e.data);
+              if (msg.type === 'progress') {
+                this.farmState = msg.data;
+                if (msg.data.completed && msg.data.total) {
+                  this.farmState.progress = Math.round((msg.data.completed / msg.data.total) * 100);
+                }
+                this.fetchStats();
+              }
+              if (msg.type === 'log') {
+                this.appendLog(msg.line);
+              }
+            } catch {}
+          };
+
+          this.ws.onclose = () => {
+            setTimeout(() => this.connectWebSocket(), 3000);
+          };
+        },
+
+        appendLog(line) {
+          this.logs.push(line);
+          if (this.logs.length > 500) this.logs.shift();
+          this.$nextTick(() => {
+            const container = document.getElementById('logContainer');
+            if (container) container.scrollTop = container.scrollHeight;
+          });
+        },
+
+        // Fetchers
+        async fetchStats() {
+          try {
+            const r = await fetch('/api/stats');
+            if (r.ok) {
+              this.stats = await r.json();
+            }
+          } catch {}
+        },
+
+        async fetchAccounts() {
+          try {
+            const r = await fetch('/api/accounts');
+            if (r.ok) {
+              this.accounts = await r.json();
+              this.$nextTick(() => {
+                if (window.lucide) window.lucide.createIcons();
+              });
+            }
+          } catch {}
+        },
+
+        async fetchLogs() {
+          try {
+            const r = await fetch('/api/logs');
+            if (r.ok) {
+              const d = await r.json();
+              const combined = [...(d.logs || []), ...(d.panel_logs || [])];
+              this.logs = combined.slice(-100);
+              this.$nextTick(() => {
+                const container = document.getElementById('logContainer');
+                if (container) container.scrollTop = container.scrollHeight;
+              });
+            }
+          } catch {}
+        },
+
+        async fetchSessions() {
+          try {
+            const r = await fetch('/api/sessions');
+            if (r.ok) {
+              const d = await r.json();
+              this.sessions = d.sessions || [];
+            }
+          } catch {}
+        },
+
+        async fetchSettings() {
+          try {
+            const r = await fetch('/api/settings');
+            if (r.ok) {
+              const cfg = await r.json();
+              const adb = cfg.proxy?.adb || {};
+              this.settingsForm.proxyPool = cfg.proxy?.pool || [];
+              
+              let mode = 'off';
+              const pMode = cfg.proxy?.mode || 'off';
+              if (adb.enabled) mode = 'adb';
+              else if (pMode === 'socks5') mode = 'socks5';
+              this.settingsForm.proxyMode = mode;
+              
+              this.settingsForm.adbPath = adb.adb_path || '';
+              this.settingsForm.adbSerial = adb.device_serial || '';
+
+              const em = cfg.email || {};
+              this.settingsForm.emailHost = em.imap_host || '';
+              this.settingsForm.emailPort = em.imap_port || 993;
+              this.settingsForm.emailAddr = em.email || '';
+              this.settingsForm.emailDomain = em.domain || '';
+
+              const nr = cfg.ninrouter || {};
+              this.settingsForm.routerUrl = nr.base_url || '';
+              this.settingsForm.routerDbPath = nr.db_path || '';
+            }
+          } catch {}
+        },
+
+        async refreshData() {
+          this.isRefreshing = true;
+          await Promise.all([this.fetchStats(), this.fetchAccounts(), this.fetchLogs()]);
+          setTimeout(() => {
+            this.isRefreshing = false;
+          }, 400);
+        },
+
+        // Actions
+        async startFarming() {
+          try {
+            const payload = {
+              count: this.farmForm.count,
+              cooldown: this.farmForm.cooldown,
+              parallel: this.farmForm.parallel,
+              dry_run: this.farmForm.dryRun,
+              proxy: this.settingsForm.proxyMode === 'socks5',
+            };
+            const r = await fetch('/api/farm', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+            if (r.ok) {
+              this.farmState.running = true;
+              this.appendLog(`[FARM] Farming dispatched: ${this.farmForm.count} accounts.`);
+            }
+          } catch (e) {
+            alert('Failed to start farm: ' + e);
+          }
+        },
+
+        async stopFarming() {
+          try {
+            await fetch('/api/stop', { method: 'POST' });
+            this.appendLog('[FARM] Stop signal sent.');
+          } catch {}
+        },
+
+        async deleteAccount(id) {
+          if (!confirm('Deactivate connection ' + id.slice(0, 8) + ' in 9Router?')) return;
+          try {
+            const r = await fetch('/api/accounts/' + id, { method: 'DELETE' });
+            if (r.ok) {
+              this.accounts = this.accounts.filter(a => a.id !== id);
+              this.fetchStats();
+              this.appendLog('[ROUTER] Deactivated account: ' + id.slice(0, 8));
+            }
+          } catch {}
+        },
+
+        // Settings actions
+        openSettingsModal() {
+          this.fetchSettings();
+          this.settingsModalOpen = true;
+          this.$nextTick(() => {
+            if (window.lucide) window.lucide.createIcons();
+          });
+        },
+
+        closeSettingsModal() {
+          this.settingsModalOpen = false;
+          this.proxyTestStatus = null;
+        },
+
+        addProxy() {
+          if (this.newProxyUrl.trim()) {
+            this.settingsForm.proxyPool.push(this.newProxyUrl.trim());
+            this.newProxyUrl = '';
+          }
+        },
+
+        removeProxy(idx) {
+          this.settingsForm.proxyPool.splice(idx, 1);
+        },
+
+        async testProxyConnection() {
+          if (!this.settingsForm.proxyPool.length) return;
+          this.proxyTestStatus = { ok: true, msg: 'Testing proxy connection...' };
+          try {
+            const r = await fetch('/api/proxy/test', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ proxy: this.settingsForm.proxyPool[0] })
+            });
+            const d = await r.json();
+            this.proxyTestStatus = {
+              ok: d.ok,
+              msg: d.ok ? `Connected via IP: ${d.ip}` : `Error: ${d.error}`
+            };
+          } catch (e) {
+            this.proxyTestStatus = { ok: false, msg: 'Test failed: ' + e };
+          }
+        },
+
+        async saveSettings() {
+          try {
+            const payload = {
+              proxy: {
+                pool: this.settingsForm.proxyMode === 'socks5' ? this.settingsForm.proxyPool : [],
+                mode: this.settingsForm.proxyMode === 'off' ? 'off' : 'socks5',
+                adb: {
+                  enabled: this.settingsForm.proxyMode === 'adb',
+                  adb_path: this.settingsForm.adbPath,
+                  device_serial: this.settingsForm.adbSerial,
+                }
+              },
+              email: {
+                imap_host: this.settingsForm.emailHost,
+                imap_port: this.settingsForm.emailPort,
+                email: this.settingsForm.emailAddr,
+                domain: this.settingsForm.emailDomain,
+                password: '***',
+              },
+              ninrouter: {
+                base_url: this.settingsForm.routerUrl,
+                db_path: this.settingsForm.routerDbPath,
+                password: '***',
+              }
+            };
+            const r = await fetch('/api/settings', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+            if (r.ok) {
+              this.closeSettingsModal();
+              this.appendLog('[SETTINGS] Configuration saved successfully.');
+            }
+          } catch (e) {
+            alert('Failed to save settings: ' + e);
+          }
+        },
+
+        // Renew actions
+        openRenewModal() {
+          this.renewCount = Math.max(1, this.stats.exhausted || 5);
+          this.renewModalOpen = true;
+        },
+
+        async executeRenew() {
+          try {
+            const r = await fetch('/api/renew', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                count: this.renewCount,
+                proxy: this.settingsForm.proxyMode === 'socks5'
+              })
+            });
+            if (r.ok) {
+              this.renewModalOpen = false;
+              this.appendLog(`[RENEW] Started renewal for ${this.renewCount} accounts.`);
+            }
+          } catch (e) {
+            alert('Renew failed: ' + e);
+          }
+        },
+
+        // Session toggles
+        toggleSessionHistory() {
+          this.showSessions = !this.showSessions;
+          if (this.showSessions) {
+            this.fetchSessions();
+          }
+        },
+
+        exportLogs() {
+          const text = this.logs.join('\n');
+          const blob = new Blob([text], { type: 'text/plain' });
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = `grokidding_logs_${new Date().toISOString().slice(0, 10)}.txt`;
+          a.click();
+        },
+
+        // Formatters & Helpers
+        getStatusBadgeClass(status) {
+          switch (status) {
+            case 'active': return 'bg-status-active-bg text-status-active border-status-active-border';
+            case 'exhausted': return 'bg-status-exhausted-bg text-status-exhausted border-status-exhausted-border';
+            case 'error':
+            case 'unavailable': return 'bg-status-error-bg text-status-error border-status-error-border';
+            default: return 'bg-surface-alt text-text-muted border-border';
+          }
+        },
+
+        formatStatus(status) {
+          if (!status) return 'Unknown';
+          return status.charAt(0).toUpperCase() + status.slice(1);
+        },
+
+        getLogLineClass(line) {
+          const l = line.toLowerCase();
+          if (l.includes('success') || l.includes('ok') || l.includes('authorized')) return 'text-emerald-400';
+          if (l.includes('fail') || l.includes('error') || l.includes('fatal')) return 'text-rose-400';
+          if (l.includes('warn') || l.includes('timeout') || l.includes('wait')) return 'text-amber-400';
+          if (l.includes('====') || l.includes('batch')) return 'text-accent font-bold';
+          return 'text-neutral-300';
+        },
+
+        highlightLog(line) {
+          const escapeHtml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          return escapeHtml(line);
+        },
+
+        formatDate(iso) {
+          if (!iso) return '-';
+          try {
+            return new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+          } catch {
+            return iso;
+          }
         }
-      });
-      if (d.total_limit === undefined) d.total_limit = sum_limit;
-      if (d.total_used === undefined) d.total_used = sum_used;
-      if (d.total_remaining === undefined) d.total_remaining = Math.max(0, sum_limit - sum_used);
-    }
-  }
-  const fmt = (n) => {
-    if (n >= 1000000) return (n/1000000).toFixed(1) + 'M';
-    if (n >= 1000) return (n/1000).toFixed(0) + 'K';
-    return n.toString();
-  };
-  document.getElementById('quotaTotal').textContent = fmt(d.total_limit);
-  document.getElementById('quotaTotalSub').textContent = d.total_accounts + ' accounts x ' + (d.total_accounts > 0 ? fmt(Math.round(d.total_limit / d.total_accounts)) : '0');
-  document.getElementById('quotaAccounts').textContent = d.total_accounts + ' accounts';
-  document.getElementById('quotaRemaining').textContent = fmt(d.total_remaining);
-  const pct = d.total_limit > 0 ? Math.round(d.total_remaining / d.total_limit * 100) : 0;
-  document.getElementById('quotaRemainingSub').textContent = pct + '% available';
-  document.getElementById('quotaUsed').textContent = fmt(d.total_used);
-  document.getElementById('quotaUsedSub').textContent = fmt(d.total_used) + ' queries';
-  const bar = document.getElementById('quotaBarFill');
-  bar.style.width = pct + '%';
- 
-  const statusEl = document.getElementById('quotaStatus');
-  if (statusEl) {
-    statusEl.style.display = 'inline-flex';
-    const isFarmRunning = document.getElementById('statusBadge').classList.contains('running');
-    if (d.total_remaining <= 0 && d.total_limit > 0) {
-      statusEl.innerHTML = '<span class="dot"></span>Limit Reached';
-      statusEl.className = 'status-badge red';
-      document.getElementById('quotaRemaining').className = 'stat-value red';
-      bar.style.background = 'var(--red)';
-      if (!isFarmRunning) {
-        document.getElementById('btnFarm').disabled = true;
-        document.getElementById('btnFarm').classList.add('btn-disabled');
-        document.getElementById('btnFarmText').textContent = 'Limit Reached';
-      }
-    } else if (pct < 10 && d.total_limit > 0) {
-      statusEl.innerHTML = '<span class="dot"></span>Low Quota';
-      statusEl.className = 'status-badge warning';
-      document.getElementById('quotaRemaining').className = 'stat-value amber';
-      bar.style.background = 'var(--amber)';
-      if (!isFarmRunning) {
-        document.getElementById('btnFarm').disabled = false;
-        document.getElementById('btnFarm').classList.remove('btn-disabled');
-        document.getElementById('btnFarmText').textContent = 'Start Farming';
-      }
-    } else {
-      statusEl.innerHTML = '<span class="dot"></span>Active';
-      statusEl.className = 'status-badge green';
-      document.getElementById('quotaRemaining').className = 'stat-value';
-      bar.style.background = 'var(--accent)';
-      if (!isFarmRunning) {
-        document.getElementById('btnFarm').disabled = false;
-        document.getElementById('btnFarm').classList.remove('btn-disabled');
-        document.getElementById('btnFarmText').textContent = 'Start Farming';
       }
     }
-  }
-}
-
-function renderAccounts() {
-  const el = document.getElementById('tableBody');
-  const countEl = document.getElementById('accountCount');
-  countEl.textContent = accounts.length + ' connection' + (accounts.length !== 1 ? 's' : '');
-
-  if (accounts.length === 0) {
-    el.innerHTML = `<div class="empty-state"><div class="icon">📭</div><div>No Grok connections in 9Router. Farm new accounts to see them here.</div></div>`;
-    return;
-  }
-
-  let html = `<table><thead><tr>
-    <th>Email</th><th>Name</th><th>Status</th><th>Models</th><th>Last Error</th><th>Auth</th><th>Action</th>
-  </tr></thead><tbody>`;
-
-  const statusMap = {
-    active: {cls:'badge-success', text:'Active'},
-    exhausted: {cls:'badge-pending', text:'Exhausted'},
-    error: {cls:'badge-fail', text:'Error'},
-    unavailable: {cls:'badge-fail', text:'Unavailable'},
-    unknown: {cls:'badge-pending', text:'Unknown'},
-  };
-
-  accounts.forEach((a, i) => {
-    const email = a.email || '?';
-    const name = a.name || '?';
-    const s = statusMap[a.status] || statusMap.unknown;
-    const models = (a.model_lock || []).join(', ') || '-';
-    const lastErr = a.last_error ? (a.last_error.length > 60 ? a.last_error.substring(0,60)+'...' : a.last_error) : '-';
-    const lastErrTime = a.last_error_at ? new Date(a.last_error_at).toLocaleString('en-US', {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
-    const auth = a.auth_type || '?';
-    const id = a.id || '';
-
-    html += `<tr style="animation:fadeIn ${0.3 + i*0.05}s ease">
-      <td class="email-cell">${esc(email)}</td>
-      <td>${esc(name)}</td>
-      <td><span class="badge ${s.cls}">${s.text}${a.error_code ? ' ('+a.error_code+')' : ''}</span></td>
-      <td style="color:var(--text3);font-size:.8rem">${esc(models)}</td>
-      <td style="color:var(--text3);font-size:.8rem;max-width:300px" title="${esc(a.last_error||'')}">${esc(lastErr)} ${lastErrTime ? '<br><small>'+lastErrTime+'</small>' : ''}</td>
-      <td style="color:var(--text3);font-size:.8rem">${esc(auth)}</td>
-      <td><button class="btn btn-danger btn-sm" onclick="deleteAccount('${esc(id)}')">Deactivate</button></td>
-    </tr>`;
-  });
-
-  html += '</tbody></table>';
-  el.innerHTML = html;
-}
-
-function updateFarmUI(data) {
-  const badge = document.getElementById('statusBadge');
-  const text = document.getElementById('statusText');
-  const btn = document.getElementById('btnFarm');
-  const btnText = document.getElementById('btnFarmText');
-  const spinner = document.getElementById('farmSpinner');
-  const btnStop = document.getElementById('btnStop');
-
-  if (data.running) {
-    badge.className = 'status-badge running';
-    text.textContent = `Running ${data.completed}/${data.total} - ${data.current_email || ''}`;
-    btn.classList.add('running');
-    btn.disabled = true;
-    btnText.textContent = `Farming... ${data.progress}%`;
-    spinner.style.display = 'block';
-    if (btnStop) btnStop.style.display = 'inline-flex';
-  } else {
-    badge.className = 'status-badge idle';
-    text.textContent = data.current_step === 'done' ? 'Complete' : 'Idle';
-    btn.classList.remove('running');
-    // Only re-enable if we are not at quota limit
-    if (!document.getElementById('quotaStatus')?.textContent?.includes('Limit Reached')) {
-      btn.disabled = false;
-      btn.classList.remove('btn-disabled');
-      btnText.textContent = 'Start Farming';
-    } else {
-      btnText.textContent = 'Limit Reached';
-    }
-    spinner.style.display = 'none';
-    if (btnStop) btnStop.style.display = 'none';
-  }
-}
-
-function parseLogLine(line) {
-  // ── Classify ──
-  let cls = '';
-  let tag = '';
-  let html = '';
-
-  const lower = line.toLowerCase();
-
-  // Divider (════)
-  if (/^={5,}$/.test(line.trim())) {
-    return {cls: 'divider', html: '──────────────'};
-  }
-
-  // Banner (═══ TEXT ═══)
-  if (/^={3,}.*={3,}$/.test(line.trim()) || /^(PHASE|BATCH|DONE)[:\s]/i.test(line.trim())) {
-    const m = line.match(/(?:PHASE|BATCH|DONE)[:\s]*(.*)/i);
-    const text = m ? m[0] : line.replace(/=/g, '').trim();
-    return {cls: 'banner', html: '▶ ' + esc(text)};
-  }
-
-  // Success
-  if (/\b(SUCCESS|OK|✓|created|pushed|connected)\b/i.test(line) && !/error|fail/i.test(line)) {
-    cls = 'success';
-    tag = '✓';
-  }
-  // Error / Fail
-  else if (/\b(ERROR|FAIL|FATAL|STOPPED|TIMEOUT|CRASH)\b/i.test(line)) {
-    cls = 'error';
-    tag = '✗';
-  }
-  // Warning
-  else if (/\b(WARN|retry|retrying|cooldown|waiting|expired|exhausted)\b/i.test(line)) {
-    cls = 'warn';
-    tag = '⚠';
-  }
-  // Step markers [1/10], [W0], [precollect]
-  else if (/^\s*\[\d+\/\d+\]/.test(line) || /^\s*\[W\d+\]/.test(line) || /^\s*\[precollect\]/.test(line) || /^\s*\[\d+\/\d+\]\s|STEP\s\d/i.test(line)) {
-    cls = 'info';
-    tag = '▸';
-  }
-  // Account separator --- Account N/N ---
-  else if (/^---.*---$/.test(line.trim())) {
-    cls = 'info';
-    tag = '●';
-  }
-  // Starting / Stopped
-  else if (/^(Starting|Stopped|Stop|Farm run|Checking)/i.test(line.trim())) {
-    cls = 'info';
-    tag = '◆';
-  }
-  // Default
-  else {
-    cls = '';
-  }
-
-  // ── Highlight ──
-  html = esc(line);
-
-  // Highlight emails
-  html = html.replace(/([\w.+-]+@[\w.-]+)/g, '<span class="email">$1</span>');
-
-  // Highlight step numbers [N/M]
-  html = html.replace(/\[(\d+)\/(\d+)\]/g, '<span class="step">[$1/$2]</span>');
-
-  // Highlight [W0], [W1] etc
-  html = html.replace(/\[W(\d+)\]/g, '<span class="step">[W$1]</span>');
-
-  // Highlight numbers after keywords like "Got N", "N workers", "N domains", "N accounts"
-  html = html.replace(/\b(\d+)\s*(workers|domains|accounts|success|seconds|secs)\b/g, '<span class="num">$1</span> $2');
-
-  // Highlight "Account N/N"
-  html = html.replace(/Account\s*(\d+)\/(\d+)/g, 'Account <span class="num">$1</span>/<span class="num">$2</span>');
-
-  return {cls, tag, html};
-}
-
-function addLog(line, scroll = true) {
-  const logBody = document.getElementById('logBody');
-  if (logBody.querySelector('.log-line.info')?.textContent === 'Waiting for activity...') {
-    logBody.innerHTML = '';
-  }
-  const parsed = parseLogLine(line);
-  const div = document.createElement('div');
-  div.className = 'log-line' + (parsed.cls ? ' ' + parsed.cls : '');
-  if (parsed.tag) {
-    div.innerHTML = '<span class="tag">' + parsed.tag + '</span>' + parsed.html;
-  } else {
-    div.innerHTML = parsed.html;
-  }
-  logBody.appendChild(div);
-  while (logBody.children.length > 300) logBody.removeChild(logBody.firstChild);
-  if (scroll) logBody.scrollTop = logBody.scrollHeight;
-  const counter = document.getElementById('logCount');
-  if (counter) counter.textContent = logBody.children.length + ' lines';
-}
-
-let renewData = null;
-let _logLines = []; // Cache for export
-
-async function toggleSessions() {
-  const panel = document.getElementById('sessionsPanel');
-  if (panel.style.display === 'none') {
-    panel.style.display = 'block';
-    await loadSessions();
-  } else {
-    panel.style.display = 'none';
-  }
-}
-
-async function loadSessions() {
-  const body = document.getElementById('sessionsBody');
-  try {
-    const res = await fetch('/api/sessions?limit=20');
-    const data = await res.json();
-    const sessions = data.sessions || [];
-    if (!sessions.length) {
-      body.innerHTML = '<div style="color:var(--text3);font-size:.8rem">No sessions recorded yet.</div>';
-      return;
-    }
-    let html = '<table style="width:100%;font-size:.78rem;border-collapse:collapse">';
-    html += '<tr style="color:var(--text3);border-bottom:1px solid var(--border)"><th style="text-align:left;padding:6px 8px">Date</th><th style="text-align:center;padding:6px 8px">Mode</th><th style="text-align:center;padding:6px 8px">Count</th><th style="text-align:center;padding:6px 8px">✓</th><th style="text-align:center;padding:6px 8px">✗</th><th style="text-align:right;padding:6px 8px">Duration</th></tr>';
-    for (const s of sessions) {
-      const date = s.started_at ? new Date(s.started_at).toLocaleString('id-ID', {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '?';
-      const dur = s.duration_sec ? (s.duration_sec > 60 ? Math.round(s.duration_sec/60)+'m' : s.duration_sec+'s') : '-';
-      const rate = s.count > 0 ? Math.round(s.successful/s.count*100) : 0;
-      const rowColor = rate === 100 ? 'var(--green)' : rate >= 50 ? 'var(--accent)' : 'var(--red)';
-      html += `<tr style="border-bottom:1px solid var(--border)">
-        <td style="padding:5px 8px">${date}</td>
-        <td style="text-align:center;padding:5px 8px">${s.mode === 'parallel' ? '⚡ Parallel' : 'Sequential'}</td>
-        <td style="text-align:center;padding:5px 8px">${s.count}</td>
-        <td style="text-align:center;padding:5px 8px;color:var(--green)">${s.successful}</td>
-        <td style="text-align:center;padding:5px 8px;color:var(--red)">${s.failed}</td>
-        <td style="text-align:right;padding:5px 8px;color:${rowColor}">${dur}</td>
-      </tr>`;
-    }
-    html += '</table>';
-    body.innerHTML = html;
-  } catch (e) {
-    body.innerHTML = '<div style="color:var(--red);font-size:.8rem">Failed to load sessions: ' + e.message + '</div>';
-  }
-}
-
-function exportLogs() {
-  const logBody = document.getElementById('logBody');
-  const lines = [];
-  for (const child of logBody.children) {
-    lines.push(child.textContent);
-  }
-  if (!lines.length) {
-    alert('No logs to export');
-    return;
-  }
-  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const text = `Grokidding Log Export — ${new Date().toLocaleString()}\n${'='.repeat(60)}\n\n${lines.join('\n')}`;
-  const blob = new Blob([text], {type: 'text/plain'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `grokidding-log-${ts}.txt`;
-  a.click();
-  URL.revokeObjectURL(a.href);
-}
-
-async function stopFarm() {
-  try {
-    await fetch('/api/stop', {method: 'POST'});
-  } catch {}
-}
-
-async function startFarm() {
-  const badge = document.getElementById('quotaStatus');
-  if (badge && badge.textContent.includes('Limit Reached')) {
-    addLog('[WARN] Cannot start farming: API rate limit reached across all active accounts. Try again later.');
-    return;
-  }
-  const count = parseInt(document.getElementById('farmCount').value) || 1;
-  const cooldown = parseInt(document.getElementById('farmCooldown').value) || 0;
-  const useProxy = settingsData?.proxy?.mode === 'socks5' || false;
-  const parallel = document.getElementById('parallelMode').checked;
-  try {
-    const r = await fetch('/api/farm', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({count, proxy: useProxy, parallel, cooldown})
-    });
-    if (!r.ok) {
-      const err = await r.json();
-      addLog('[ERROR] ' + (err.detail || 'Failed to start'));
-    } else {
-      document.getElementById('btnStop').style.display = 'inline-flex';
-      document.getElementById('btnFarm').disabled = true;
-      document.getElementById('btnFarmText').textContent = 'Farming...';
-      document.getElementById('farmSpinner').style.display = 'block';
-    }
-  } catch (e) {
-    addLog('[ERROR] ' + e.message);
-  }
-}
-
-async function checkAndRenew() {
-  const btn = document.getElementById('btnRenew');
-  const btnText = document.getElementById('btnRenewText');
-  const spinner = document.getElementById('renewSpinner');
-  btn.disabled = true;
-  spinner.style.display = 'block';
-  btnText.textContent = 'Checking...';
-
-  try {
-    const r = await fetch('/api/check-quota');
-    if (!r.ok) {
-      const err = await r.json();
-      alert(err.error || 'Failed to check quota');
-      return;
-    }
-    renewData = await r.json();
-    showRenewModal(renewData);
-  } catch (e) {
-    alert('Error: ' + e.message);
-  } finally {
-    btn.disabled = false;
-    spinner.style.display = 'none';
-    btnText.textContent = 'Renew';
-  }
-}
-
-function showRenewModal(data) {
-  const content = document.getElementById('renewContent');
-  const confirmBtn = document.getElementById('btnConfirmRenew');
-  let html = '';
-
-  if (data.expired === 0) {
-    html = `<p style="color:var(--green)">All ${data.total} connections are active. No renewal needed.</p>`;
-    confirmBtn.style.display = 'none';
-  } else {
-    html += `<p><strong style="color:var(--red)">${data.expired}</strong> of ${data.total} accounts have exhausted free usage (429). <strong style="color:var(--green)">${data.active}</strong> still active.</p>`;
-    html += `<p style="margin-bottom:12px">Expired accounts will be deleted from <strong>9Router</strong> + <strong>x.ai</strong>, then new accounts will be farmed.</p>`;
-    html += `<div class="quota-list">`;
-    data.connections.forEach(c => {
-      const status = c.quota?.status || 'unknown';
-      const dotClass = status === 'active' ? 'active' : 'expired';
-      const usageStr = c.quota?.usage != null ? `${(c.quota.usage/1000).toFixed(0)}K/${(c.quota.limit/1000).toFixed(0)}K` : status;
-      const emailStr = c.email ? `<br><span style="font-size:.7rem;color:var(--text3)">${esc(c.email)}</span>` : '';
-      html += `<div class="quota-item">
-        <div style="display:flex;align-items:center">
-          <span class="status-dot ${dotClass}"></span>
-          <span>${esc(c.name || c.id.slice(0,12))}${emailStr}</span>
-        </div>
-        <span class="quota-badge ${status === 'active' ? 'quota-ok' : 'quota-dead'}">${usageStr}</span>
-      </div>`;
-    });
-    html += `</div>`;
-    html += `<div style="display:flex;align-items:center;gap:8px;margin-top:8px">
-      <span class="count-label">Renew count:</span>
-      <input type="number" id="renewCount" class="count-input" value="${data.expired}" min="1" max="${data.total}">
-      <span style="font-size:.75rem;color:var(--text3)">(auto: ${data.expired} expired)</span>
-    </div>`;
-    confirmBtn.style.display = 'inline-flex';
-  }
-
-  content.innerHTML = html;
-  document.getElementById('renewModal').classList.add('show');
-}
-
-function closeRenewModal() {
- document.getElementById('renewModal').classList.remove('show');
- renewData = null;
-}
-async function confirmRenew() {
-  const badge = document.getElementById('quotaStatus');
-  if (badge && badge.textContent.includes('Limit Reached')) {
-    addLog('[WARN] Cannot renew: API rate limit reached across all active accounts. Try again later.');
-    closeRenewModal();
-    return;
-  }
- const count = parseInt(document.getElementById('renewCount')?.value) || 0;
- const btn = document.getElementById('btnConfirmRenew');
- const spinner = document.getElementById('confirmRenewSpinner');
- btn.disabled = true;
- spinner.style.display = 'block';
- try {
-   const r = await fetch('/api/renew', {
-     method: 'POST',
-     headers: {'Content-Type': 'application/json'},
-     body: JSON.stringify({count, proxy: settingsData?.proxy?.mode === 'socks5'})
-    });
-    const d = await r.json();
-    if (!r.ok) {
-      alert(d.error || 'Renew failed');
-      return;
-    }
-    closeRenewModal();
-    addLog(`[RENEW] Deleted ${d.deleted?.length || 0} expired: ${d.deleted?.join(', ')}`);
-    addLog(`[RENEW] Farming ${d.farming_count} replacement(s)...`);
-  } catch (e) {
-    alert('Error: ' + e.message);
-  } finally {
-    btn.disabled = false;
-    spinner.style.display = 'none';
-  }
-}
-
-async function deleteAccount(id) {
-  if (!id || !confirm('Deactivate this connection?')) return;
-  try {
-    await fetch('/api/accounts/' + id, {method: 'DELETE'});
-    fetchAccounts();
-    fetchStats();
-  } catch {}
-}
-
-function refreshAll() {
-  fetchStats();
-  fetchAccounts();
-  fetchLogs();
-  fetchQuota();
-}
-
-function esc(s) {
-  const d = document.createElement('div');
-  d.textContent = s;
-  return d.innerHTML;
-}
-
-connectWS();
-fetchStats();
-fetchAccounts();
-fetchLogs();
-fetchQuota();
-setInterval(() => { fetchStats(); fetchAccounts(); fetchQuota(); }, 10000);
-
-let settingsData = null;
-let proxyPool = [];
-
-function openSettings() {
-  fetch('/api/settings').then(r => r.json()).then(cfg => {
-    settingsData = cfg;
-    const adb = cfg.proxy?.adb || {};
-    proxyPool = cfg.proxy?.pool || [];
-    let mode = 'off';
-    const proxyMode = cfg.proxy?.mode || 'off';
-    if (adb.enabled) mode = 'adb';
-    else if (proxyMode === 'socks5' || (proxyMode !== 'off' && proxyPool.length > 0)) mode = 'socks5';
-    document.getElementById('proxyMode').value = mode;
-    renderProxyList();
-    onRotationModeChange();
-    document.getElementById('adbPath').value = adb.adb_path || '';
-    document.getElementById('adbSerial').value = adb.device_serial || '';
-    const em = cfg.email || {};
-    document.getElementById('emailHost').value = em.imap_host || '';
-    document.getElementById('emailPort').value = em.imap_port || 993;
-    document.getElementById('emailAddr').value = em.email || '';
-    document.getElementById('emailDomain').value = em.domain || '';
-    const nr = cfg.ninrouter || {};
-    document.getElementById('routerUrl').value = nr.base_url || '';
-    document.getElementById('routerDbPath').value = nr.db_path || '';
-    document.getElementById('settingsModal').classList.add('show');
-  }).catch(e => {
-    addLog('[ERROR] Failed to load settings: ' + e);
-  });
-}
-
-function closeSettings() {
-  document.getElementById('settingsModal').classList.remove('show');
-  document.getElementById('adbTestResult').textContent = '';
-  document.getElementById('adbTestResult').className = 'proxy-test';
-}
-
-function switchSettingsTab(tab) {
-  document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.settings-section').forEach(s => s.classList.remove('active'));
-  event.target.classList.add('active');
-  document.getElementById('tab-' + tab).classList.add('active');
-}
-
-function renderProxyList() {
-  const ul = document.getElementById('proxyList');
-  if (proxyPool.length === 0) {
-    ul.innerHTML = '<li style="color:var(--text3);font-size:.8rem;padding:8px">No proxies configured</li>';
-    return;
-  }
-  ul.innerHTML = proxyPool.map((url, i) => {
-    const masked = url.replace(/:[^@]+@/, ':***@');
-    return `<li class="proxy-item"><span class="ip">${esc(masked)}</span><span class="remove" onclick="removeProxy(${i})">x</span></li>`;
-  }).join('');
-}
-
-function addProxy() {
-  const input = document.getElementById('proxyNewInput');
-  const val = input.value.trim();
-  if (!val) return;
-  const ok = ['socks5://','socks4://','http://','https://'].some(s => val.startsWith(s));
-  if (!ok) { alert('Format tidak didukung. Gunakan: socks5://, socks4://, http://, atau https://'); return; }
-  proxyPool.push(val);
-  input.value = '';
-  renderProxyList();
-}
-
-function removeProxy(i) {
-  proxyPool.splice(i, 1);
-  renderProxyList();
-}
-
-function onRotationModeChange() {
-  const mode = document.getElementById('proxyMode').value;
-  document.getElementById('proxyPoolSection').style.display = mode === 'socks5' ? 'block' : 'none';
-  document.getElementById('adbSection').style.display = mode === 'adb' ? 'block' : 'none';
-  document.getElementById('offModeWarning').style.display = mode === 'off' ? 'block' : 'none';
-}
-
-function testProxy() {
-  const el = document.getElementById('proxyTestResult');
-  if (!proxyPool.length) { el.className = 'proxy-test err'; el.textContent = 'No proxies in pool'; return; }
-  el.className = 'proxy-test testing'; el.textContent = 'Testing proxy...';
-  fetch('/api/proxy/test', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({proxy: proxyPool[0]})
-  }).then(r => r.json()).then(d => {
-    if (d.ok) { el.className = 'proxy-test ok'; el.textContent = 'Proxy OK: ' + (d.ip || 'connected'); }
-    else { el.className = 'proxy-test err'; el.textContent = 'Proxy error: ' + d.error; }
-  }).catch(e => { el.className = 'proxy-test err'; el.textContent = 'Request failed: ' + e; });
-}
-
-function testAdb() {
-  const el = document.getElementById('adbTestResult');
-  el.className = 'proxy-test testing';
-  el.textContent = 'Testing ADB connection...';
-  const adbPath = document.getElementById('adbPath').value;
-  const serial = document.getElementById('adbSerial').value;
-  fetch('/api/proxy/test', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({type: 'adb', adb_path: adbPath, serial: serial})
-  }).then(r => r.json()).then(d => {
-    if (d.ok) { el.className = 'proxy-test ok'; el.textContent = 'ADB connected: ' + (d.device || 'OK'); }
-    else { el.className = 'proxy-test err'; el.textContent = 'ADB error: ' + d.error; }
-  }).catch(e => { el.className = 'proxy-test err'; el.textContent = 'Request failed: ' + e; });
-}
-
-function saveSettings() {
-  const mode = document.getElementById('proxyMode').value;
-  const payload = {
-    proxy: {
-      pool: mode === 'socks5' ? proxyPool : (settingsData?.proxy?.pool || []),
-      mode: mode === 'off' ? 'off' : 'socks5',
-      adb: {
-        enabled: mode === 'adb',
-        adb_path: document.getElementById('adbPath').value,
-        device_serial: document.getElementById('adbSerial').value,
-      }
-    },
-    email: {
-      imap_host: document.getElementById('emailHost').value,
-      imap_port: parseInt(document.getElementById('emailPort').value) || 993,
-      email: document.getElementById('emailAddr').value,
-      domain: document.getElementById('emailDomain').value,
-      password: '***',
-    },
-    ninrouter: {
-      base_url: document.getElementById('routerUrl').value,
-      password: '***',
-      db_path: document.getElementById('routerDbPath').value,
-    }
-  };
-  fetch('/api/settings', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(payload)
-  }).then(r => r.json()).then(d => {
-    if (d.ok) {
-      closeSettings();
-      addLog('[SETTINGS] Settings saved');
-      settingsData = Object.assign({}, settingsData, payload);
-    }
-    else { alert('Error: ' + (d.error || 'unknown')); }
-  }).catch(e => { alert('Failed: ' + e); });
-}
-
-fetch('/api/settings').then(r => r.json()).then(cfg => { settingsData = cfg; }).catch(() => {});
-</script>
+  </script>
 </body>
 </html>

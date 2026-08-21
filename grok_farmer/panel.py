@@ -216,16 +216,9 @@ def _fetch_quota_sync() -> dict:
                     "used": a.get("used", 0),
                 }
 
-    try:
-        from .usage_db import get_usage
-        db_usage = get_usage()
-        total_limit = sum(u.get("limit_tokens", 0) for u in db_usage)
-        total_used = sum(u.get("used_tokens", 0) for u in db_usage)
-        total_remaining = max(0, total_limit - total_used)
-    except Exception:
-        total_limit = sum(a.get("limit", 0) for a in accounts)
-        total_used = sum(a.get("used", 0) for a in accounts)
-        total_remaining = sum(a.get("remaining", 0) for a in accounts)
+    total_limit = sum(a.get("limit", 0) for a in accounts)
+    total_used = sum(a.get("used", 0) for a in accounts)
+    total_remaining = sum(a.get("remaining", 0) for a in accounts)
 
     return {
         "total_accounts": len(connections),
@@ -1057,12 +1050,6 @@ def _safe_db_usage(db_usage: list) -> list:
 async def get_quota(force: bool = False):
     """Return aggregated quota — cached for 30s, non-blocking."""
     now = time.time()
-    
-    try:
-        from .usage_db import update_usage, get_usage
-    except ImportError:
-        get_usage = None
-        update_usage = None
 
     # Check cache WITHOUT holding lock during I/O
     use_cache = False
@@ -1073,13 +1060,6 @@ async def get_quota(force: bool = False):
             use_cache = True
 
     if use_cache:
-        # Enrich with DB usage data OUTSIDE lock
-        if get_usage:
-            try:
-                db_usage = get_usage()
-                cached["db_usage"] = _safe_db_usage(db_usage)
-            except Exception:
-                pass
         return JSONResponse(cached)
 
     # Run blocking Grok API calls in thread pool with strict timeout
@@ -1088,61 +1068,11 @@ async def get_quota(force: bool = False):
         data["cached"] = False
         data["ts"] = now
     except asyncio.TimeoutError:
-        # Fallback to DB if Grok API hangs
-        try:
-            if not get_usage:
-                from .usage_db import get_usage
-            db_usage = get_usage()
-            
-            data = {
-                "accounts": [],
-                "total_limit": sum(u.get("limit_tokens", 0) for u in db_usage),
-                "total_used": sum(u.get("used_tokens", 0) for u in db_usage),
-                "total_remaining": max(0, sum(u.get("limit_tokens", 0) for u in db_usage) - sum(u.get("used_tokens", 0) for u in db_usage)),
-                "total_accounts": len(db_usage),
-                "cached": False,
-                "ts": now,
-                "db_usage": _safe_db_usage(db_usage),
-                "status": "db_fallback"
-            }
-            
-            for row in db_usage:
-                email = row.get("email") or row.get("account_id")
-                limit = row.get("limit_tokens", 0)
-                used = row.get("used_tokens", 0)
-                rem = max(0, limit - used)
-                
-                data["accounts"].append({
-                    "name": row.get("account_id"), 
-                    "email": email, 
-                    "status": "active" if rem > 0 else "expired",
-                    "limit": limit,
-                    "remaining": rem,
-                    "used": used
-                })
-            
-            return JSONResponse(data)
-        except Exception:
-            # Absolute fallback if DB also fails
-            return JSONResponse({"error": "Quota check timed out and DB fallback failed"}, status_code=504)
+        return JSONResponse({"total_accounts": 0, "total_limit": 0, "total_remaining": 0, "total_used": 0, "accounts": [], "cached": False, "ts": now, "status": "timeout"})
 
     with _quota_lock:
         _quota_cache["data"] = data
         _quota_cache["ts"] = now
-        
-    # Update DB with new quota
-    try:
-        if not update_usage:
-            from .usage_db import update_usage, get_usage
-        for acc in data.get("accounts", []):
-            if acc.get("email"):
-                update_usage(acc.get("name") or acc.get("email"), acc.get("email"), acc.get("limit", 0), acc.get("used", 0))
-                
-        # Enrich response with DB data
-        db_usage = get_usage()
-        data["db_usage"] = _safe_db_usage(db_usage)
-    except Exception:
-        pass
 
     return JSONResponse(data)
 
@@ -1215,13 +1145,6 @@ async def proxy_grok_responses(request: Request):
         # Get remaining quota from headers
         remaining = int(proxy_resp.headers.get("x-ratelimit-remaining-tokens", "0"))
         limit = int(proxy_resp.headers.get("x-ratelimit-limit-tokens", "1000000"))
-        
-        # Update database with new usage
-        try:
-            from .usage_db import update_usage
-            update_usage(conn_name, conn_email, limit, limit - remaining)
-        except Exception as e:
-            pass
 
         # Log request
         log_entry = {
