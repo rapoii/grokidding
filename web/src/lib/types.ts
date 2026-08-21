@@ -55,23 +55,6 @@ export interface SessionHistory {
   duration?: number;
 }
 
-export interface QuotaAccount {
-  name: string;
-  email: string;
-  status: string;
-  limit: number;
-  remaining: number;
-  used: number;
-}
-
-export interface QuotaData {
-  total_accounts: number;
-  total_limit: number;
-  total_remaining: number;
-  total_used: number;
-  accounts: QuotaAccount[];
-}
-
 export interface Settings {
   [key: string]: unknown;
 }
@@ -84,5 +67,4 @@ export interface LogResponse {
 // WebSocket message types
 export type WSMessage =
   | { type: "log"; line: string }
-  | { type: "progress"; data: FarmStatus }
-  | { type: "quota"; data: QuotaData };
+  | { type: "progress"; data: FarmStatus };

@@ -1,264 +1,289 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
-import { motion, useReducedMotion } from "motion/react";
-import {
-  Users,
-  CheckCircle,
-  WarningCircle,
-  TrendUp,
-  ArrowClockwise,
-} from "@phosphor-icons/react";
-import { getStats, getAccounts, getStatus } from "@/lib/api";
-import type { Stats, Account, FarmStatus } from "@/lib/types";
+import { DashboardShell } from "@/components/layout/dashboard-shell";
+import { FarmControlPanel } from "@/components/features/farm-control-panel";
+import { GlassCard } from "@/components/ui/glass-card";
+import { StatusBadge } from "@/components/ui/status-badge";
+import { Button } from "@/components/ui/button";
+import { useWebSocket } from "@/hooks/use-websocket";
+import { useStats } from "@/hooks/use-api";
+import { useState } from "react";
+import { 
+  Users, 
+  Activity, 
+  AlertTriangle, 
+  Zap,
+  Server,
+  ArrowUpRight,
+  Play,
+  Pause
+} from "lucide-react";
+import * as api from "@/lib/api-client";
 
 export default function DashboardPage() {
-  const [stats, setStats] = useState<Stats | null>(null);
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [farmStatus, setFarmStatus] = useState<FarmStatus | null>(null);
-  const [loading, setLoading] = useState(true);
-  const reduce = useReducedMotion();
+  const { data: stats, mutate: mutateStats } = useStats();
+  const [isStartingAll, setIsStartingAll] = useState(false);
+  const [isStoppingAll, setIsStoppingAll] = useState(false);
+  const { status: wsStatus } = useWebSocket({
+    onMessage: (msg) => {
+      if (msg.type === 'progress' || msg.type === 'status_change') {
+        mutateStats();
+      }
+    }
+  });
 
-  const fetchData = async () => {
+  const handleStartAll = async () => {
+    setIsStartingAll(true);
     try {
-      const [s, a, st] = await Promise.all([
-        getStats(),
-        getAccounts(),
-        getStatus(),
-      ]);
-      setStats(s);
-      setAccounts(a);
-      setFarmStatus(st);
-    } catch (e) {
-      console.error("Failed to fetch dashboard data:", e);
+      await api.startAllAccounts();
+      mutateStats();
+    } catch (error) {
+      console.error("Failed to start all accounts:", error);
     } finally {
-      setLoading(false);
+      setIsStartingAll(false);
     }
   };
 
-  useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 10000);
-    return () => clearInterval(interval);
-  }, []);
-
-  if (loading && !stats) {
-    return (
-      <div className="mx-auto max-w-5xl px-5 pt-14 lg:px-8 lg:pt-8">
-        <div className="mb-8">
-          <div className="skeleton mb-3 h-8 w-40 rounded-lg" />
-          <div className="skeleton h-4 w-64 rounded-lg" />
-        </div>
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {[...Array(4)].map((_, i) => (
-            <div key={i} className="skeleton h-28 rounded-2xl" />
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  const recentAccounts = accounts.slice(0, 8);
-
+  const handleStopAll = async () => {
+    setIsStoppingAll(true);
+    try {
+      await api.stopAllAccounts();
+      mutateStats();
+    } catch (error) {
+      console.error("Failed to stop all accounts:", error);
+    } finally {
+      setIsStoppingAll(false);
+    }
+  };
   return (
-    <div className="mx-auto max-w-5xl px-5 pt-14 lg:px-8 lg:pt-8">
-      {/* Header */}
-      <div className="mb-8 flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="text-[28px] font-bold tracking-tight text-[var(--color-text)]">
+    <DashboardShell>
+      {/* Header Section */}
+      <header className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-[28px] font-bold tracking-tight text-[var(--text-primary)] leading-none mb-1">
             Dashboard
           </h1>
-          <p className="mt-1 text-[14px] text-[var(--color-text-secondary)]">
-            Overview of your Grok accounts and farming status.
+          <p className="text-[15px] text-[var(--text-secondary)]">
+            System overview and real-time farm monitoring
           </p>
         </div>
-        <button
-          onClick={fetchData}
-          className="flex items-center gap-2 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-bg-elevated)] px-4 py-2 text-[13px] font-medium text-[var(--color-text-secondary)] transition-all hover:bg-[var(--color-bg-muted)] active:scale-[0.98]"
-        >
-          <ArrowClockwise size={16} />
-          Refresh
-        </button>
-      </div>
-
-      {/* Farm progress banner */}
-      {farmStatus?.running && (
-        <motion.div
-          initial={reduce ? false : { opacity: 0, y: -8 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mb-6 flex items-center gap-3 rounded-2xl border border-[var(--color-accent-subtle)] bg-[var(--color-accent-subtle)] px-4 py-3"
-        >
-          <div className="h-2 w-2 animate-pulse rounded-full bg-[var(--color-accent)]" />
-          <p className="text-[14px] font-medium text-[var(--color-text)]">
-            {farmStatus.current_step}
-          </p>
-          <div className="ml-auto flex items-center gap-3">
-            <span className="font-mono text-[13px] text-[var(--color-text-secondary)]">
-              {farmStatus.completed}/{farmStatus.total}
-            </span>
-            <div className="h-1.5 w-24 overflow-hidden rounded-full bg-[var(--color-bg-muted)]">
-              <div
-                className="h-full rounded-full bg-[var(--color-accent)] transition-all duration-500"
-                style={{ width: `${farmStatus.progress}%` }}
-              />
-            </div>
+        
+        <div className="flex items-center gap-3">
+          <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full glass-subtle text-xs font-medium text-[var(--status-success)]">
+            <span className={`w-2 h-2 rounded-full ${wsStatus === 'connected' ? 'bg-[var(--status-success)] animate-pulse' : wsStatus === 'connecting' ? 'bg-[var(--status-warning)] animate-pulse' : 'bg-[var(--status-error)]'}`} />
+            {wsStatus === 'connected' ? 'System Operational' : wsStatus === 'connecting' ? 'Connecting...' : 'Disconnected'}
           </div>
-        </motion.div>
-      )}
+          <Button leftIcon={<Play className="w-4 h-4" />} size="sm" onClick={handleStartAll} disabled={isStartingAll}>
+            {isStartingAll ? 'Starting...' : 'Start All'}
+          </Button>
+          <Button variant="secondary" leftIcon={<Pause className="w-4 h-4" />} size="sm" onClick={handleStopAll} disabled={isStoppingAll}>
+            {isStoppingAll ? 'Stopping...' : 'Stop All'}
+          </Button>
+        </div>
+      </header>
 
-      {/* Stat cards — iOS widget style */}
-      <div className="mb-8 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard
+      {/* Stats Grid */}
+      <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <StatCard 
+          title="Total Accounts" 
+          value={stats?.totalAccounts.toLocaleString() || "0"} 
           icon={Users}
-          label="Total Accounts"
-          value={stats?.total ?? 0}
-          color="bg-[var(--color-accent-subtle)] text-[var(--color-accent)]"
-          delay={0}
+          color="var(--accent-blue)"
         />
-        <StatCard
-          icon={CheckCircle}
-          label="Active"
-          value={stats?.active ?? 0}
-          color="bg-[var(--color-success-subtle)] text-[var(--color-success)]"
-          delay={0.06}
+        <StatCard 
+          title="Active Sessions" 
+          value={stats?.activeSessions.toLocaleString() || "0"} 
+          subtitle="currently farming"
+          icon={Activity}
+          color="var(--status-success)"
         />
-        <StatCard
-          icon={WarningCircle}
-          label="Exhausted"
-          value={stats?.exhausted ?? 0}
-          color="bg-[var(--color-warning-subtle)] text-[var(--color-warning)]"
-          delay={0.12}
+        <StatCard 
+          title="Exhausted Today" 
+          value={stats?.exhaustedToday.toLocaleString() || "0"} 
+          icon={AlertTriangle}
+          color="var(--status-warning)"
         />
-        <StatCard
-          icon={TrendUp}
-          label="Success Rate"
-          value={`${stats?.rate ?? 0}%`}
-          color="bg-[var(--color-success-subtle)] text-[var(--color-success)]"
-          delay={0.18}
+        <StatCard 
+          title="Avg. Response Time" 
+          value={stats?.avgResponseTime ? `${stats.avgResponseTime}ms` : "0ms"} 
+          icon={Zap}
+          color="var(--accent-indigo)"
         />
-      </div>
+      </section>
 
-      {/* Recent accounts table */}
-      <div className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-[var(--shadow-sm)]">
-        <div className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4">
-          <h2 className="text-[16px] font-semibold text-[var(--color-text)]">
-            Recent Accounts
-          </h2>
-          <span className="font-mono text-[13px] text-[var(--color-text-muted)]">
-            {stats?.total ?? 0} total
-          </span>
+      {/* Main Content Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Left Column - Activity & Quota */}
+        <div className="lg:col-span-2 space-y-6">
+          {/* Farm Control Panel */}
+          <FarmControlPanel 
+            isRunning={stats?.activeSessions ? stats.activeSessions > 0 : false} 
+            activeCount={stats?.activeSessions || 0}
+            totalCount={stats?.totalAccounts || 0}
+            onStart={handleStartAll}
+            onStop={handleStopAll}
+          />
+          
+          {/* Live Activity Chart Placeholder */}
+          <GlassCard padding="none" className="overflow-hidden">
+            <div className="p-5 border-b border-[var(--glass-border)] flex items-center justify-between">
+              <h3 className="font-semibold text-[var(--text-primary)]">Live Request Volume</h3>
+              <div className="flex gap-2">
+                {["1H", "6H", "24H", "7D"].map((t) => (
+                  <button key={t} className="px-2 py-1 text-xs font-medium rounded hover:bg-white/5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors">
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="h-64 w-full bg-gradient-to-b from-transparent to-[var(--accent-blue)]/5 flex items-end px-4 pb-4 relative">
+              {/* Simulated Chart Bars */}
+              <div className="flex items-end justify-between w-full h-full gap-1 opacity-80">
+                {Array.from({ length: 40 }).map((_, i) => {
+                  const height = Math.max(10, (i * 7 + 13) % 90); // deterministic pseudo-random height
+                  return (
+                    <div 
+                      key={i} 
+                      className="flex-1 bg-[var(--accent-blue)]/40 hover:bg-[var(--accent-blue)]/70 transition-all duration-300 rounded-t-sm"
+                      style={{ height: `${height}%` }}
+                    />
+                  );
+                })}
+              </div>
+              <div className="absolute top-4 right-4 glass-subtle px-3 py-1.5 rounded-lg text-xs font-mono text-[var(--text-secondary)]">
+                12.4k req/min
+              </div>
+            </div>
+          </GlassCard>
+
+          {/* Recent Accounts Table Preview */}
+          <GlassCard padding="none" className="overflow-hidden">
+            <div className="p-5 border-b border-[var(--glass-border)] flex items-center justify-between">
+              <h3 className="font-semibold text-[var(--text-primary)]">Recent Account Activity</h3>
+              <Button variant="ghost" size="sm" rightIcon={<ArrowUpRight className="w-3 h-3" />}>
+                View All
+              </Button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-black/5 dark:bg-white/5 text-[var(--text-secondary)] uppercase text-xs tracking-wider">
+                  <tr>
+                    <th className="px-5 py-3 font-medium">Account</th>
+                    <th className="px-5 py-3 font-medium">Status</th>
+                    <th className="px-5 py-3 font-medium">Last Action</th>
+                    <th className="px-5 py-3 font-medium text-right">Requests</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--glass-border)]">
+                  {[
+                    { email: "user_alpha@proton.me", status: "running", action: "Farming active", reqs: "1,240" },
+                    { email: "dev_test_02@gmail.com", status: "cooldown", action: "Rate limited", reqs: "856" },
+                    { email: "worker_node_7@outlook.com", status: "success", action: "Completed batch", reqs: "3,412" },
+                    { email: "backup_acct_x@tempmail.net", status: "error", action: "Auth failed", reqs: "0" },
+                    { email: "main_ops_lead@company.io", status: "stopped", action: "Manual pause", reqs: "12,890" },
+                  ].map((row, i) => (
+                    <tr key={i} className="hover:bg-white/[0.02] transition-colors group cursor-pointer">
+                      <td className="px-5 py-3 font-medium text-[var(--text-primary)]">{row.email}</td>
+                      <td className="px-5 py-3">
+                        <StatusBadge status={row.status as "running" | "cooldown" | "success" | "error" | "stopped"} />
+                      </td>
+                      <td className="px-5 py-3 text-[var(--text-secondary)]">{row.action}</td>
+                      <td className="px-5 py-3 text-right font-mono text-[var(--text-secondary)]">{row.reqs}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </GlassCard>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-[var(--color-border)]">
-                <th className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
-                  Email
-                </th>
-                <th className="hidden px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)] sm:table-cell">
-                  Name
-                </th>
-                <th className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
-                  Status
-                </th>
-                <th className="hidden px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)] sm:table-cell">
-                  Auth
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {recentAccounts.map((account) => (
-                <tr
-                  key={account.id}
-                  className="border-b border-[var(--color-border)] transition-colors last:border-0 hover:bg-[var(--color-bg-subtle)]"
-                >
-                  <td className="px-5 py-3 font-mono text-[13px] text-[var(--color-text-secondary)]">
-                    {account.email || "?"}
-                  </td>
-                  <td className="hidden px-5 py-3 text-[14px] font-medium text-[var(--color-text)] sm:table-cell">
-                    {account.name}
-                  </td>
-                  <td className="px-5 py-3">
-                    <StatusBadge status={account.status} />
-                  </td>
-                  <td className="hidden px-5 py-3 text-[13px] text-[var(--color-text-muted)] sm:table-cell">
-                    {account.auth_type || "oauth"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+
+        {/* Right Column - System & Quick Actions */}
+        <div className="space-y-6">
+          {/* System Health Widget */}
+          <GlassCard>
+            <div className="flex items-center gap-3 mb-4">
+              <Server className="w-5 h-5 text-[var(--accent-blue)]" />
+              <h3 className="font-semibold text-[var(--text-primary)]">System Health</h3>
+            </div>
+            
+            <div className="space-y-4">
+              <HealthRow label="WebSocket Connection" status={wsStatus === 'connected' ? 'connected' : wsStatus === 'connecting' ? 'warning' : 'error'} />
+              <HealthRow label="Database Latency" value={stats?.dbLatency ? `${stats.dbLatency}ms` : "—"} status={!stats ? undefined : stats.dbLatency < 50 ? 'good' : stats.dbLatency < 200 ? 'warning' : 'error'} />
+              <HealthRow label="Memory Usage" value={stats?.memoryUsage ? `${stats.memoryUsage}%` : "—"} status={!stats ? undefined : stats.memoryUsage < 70 ? 'good' : stats.memoryUsage < 90 ? 'warning' : 'error'} />
+              <HealthRow label="Uptime" value={stats?.uptime || "—"} />
+            </div>
+          </GlassCard>
+
+          {/* Quick Actions */}
+          <GlassCard>
+            <h3 className="font-semibold text-[var(--text-primary)] mb-4">Quick Actions</h3>
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="secondary" size="sm" className="justify-start">Import Proxies</Button>
+              <Button variant="secondary" size="sm" className="justify-start">Export Logs</Button>
+              <Button variant="secondary" size="sm" className="justify-start">Renew All</Button>
+              <Button variant="secondary" size="sm" className="justify-start">Clear Cache</Button>
+            </div>
+          </GlassCard>
         </div>
       </div>
-    </div>
+    </DashboardShell>
   );
 }
 
-function StatCard({
-  icon: Icon,
-  label,
-  value,
-  color,
-  delay,
-}: {
-  icon: typeof Users;
-  label: string;
-  value: string | number;
+/* --- Helper Components --- */
+
+function StatCard({ title, value, change, trend, subtitle, icon: Icon, color }: {
+  title: string;
+  value: string;
+  change?: string;
+  trend?: "up" | "down" | "neutral";
+  subtitle?: string;
+  icon: React.ElementType;
   color: string;
-  delay: number;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const reduce = useReducedMotion();
-
-  useEffect(() => {
-    if (!ref.current || reduce) return;
-    const el = ref.current;
-    import("gsap").then(({ gsap }) => {
-      gsap.fromTo(
-        el,
-        { y: 16, autoAlpha: 0 },
-        { y: 0, autoAlpha: 1, duration: 0.5, delay, ease: "back.out(1.4)" }
-      );
-    });
-  }, [delay, reduce]);
-
   return (
-    <div
-      ref={ref}
-      className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4 shadow-[var(--shadow-sm)] transition-shadow duration-200 hover:shadow-[var(--shadow-md)] sm:p-5"
-    >
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-2">
-          <div
-            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] ${color}`}
-          >
-            <Icon size={16} weight="duotone" />
-          </div>
-          <p className="truncate text-[12px] font-medium text-[var(--color-text-secondary)] sm:text-[13px]">
-            {label}
-          </p>
+    <GlassCard padding="md" className="relative overflow-hidden group">
+      <div className="flex items-start justify-between mb-3">
+        <div className="p-2 rounded-lg" style={{ backgroundColor: `${color}15`, color }}>
+          <Icon className="w-5 h-5" />
         </div>
-        <p className="text-[24px] font-bold tracking-tight text-[var(--color-text)] sm:text-[26px]">
-          {value}
-        </p>
+        {change && (
+          <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+            trend === "up" ? "text-[var(--status-success)] bg-[var(--status-success)]/10" :
+            trend === "down" ? "text-[var(--status-error)] bg-[var(--status-error)]/10" :
+            "text-[var(--text-secondary)] bg-black/5 dark:bg-white/5"
+          }`}>
+            {change}
+          </span>
+        )}
       </div>
-    </div>
+      <p className="text-[var(--text-secondary)] text-sm font-medium mb-1">{title}</p>
+      <p className="text-2xl font-bold text-[var(--text-primary)] tracking-tight">{value}</p>
+      {subtitle && <p className="text-xs text-[var(--text-tertiary)] mt-1">{subtitle}</p>}
+      
+      {/* Hover Glow Effect */}
+      <div className="absolute -right-4 -bottom-4 w-24 h-24 rounded-full blur-2xl opacity-0 group-hover:opacity-20 transition-opacity duration-500 pointer-events-none" style={{ backgroundColor: color }} />
+    </GlassCard>
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, { bg: string; text: string; label: string }> = {
-    active: { bg: "bg-[var(--color-success-subtle)]", text: "text-[var(--color-success)]", label: "Active" },
-    exhausted: { bg: "bg-[var(--color-warning-subtle)]", text: "text-[var(--color-warning)]", label: "Exhausted" },
-    error: { bg: "bg-[var(--color-error-subtle)]", text: "text-[var(--color-error)]", label: "Error" },
-    unavailable: { bg: "bg-[var(--color-bg-muted)]", text: "text-[var(--color-text-muted)]", label: "N/A" },
-    unknown: { bg: "bg-[var(--color-bg-muted)]", text: "text-[var(--color-text-muted)]", label: "Unknown" },
-    no_token: { bg: "bg-[var(--color-bg-muted)]", text: "text-[var(--color-text-muted)]", label: "No Token" },
+function HealthRow({ label, value, status }: { label: string; value?: string; status?: "connected" | "good" | "warning" | "error" }) {
+  const statusColors = {
+    connected: "var(--status-success)",
+    good: "var(--status-success)",
+    warning: "var(--status-warning)",
+    error: "var(--status-error)",
   };
-  const s = map[status] || map.unknown;
+
   return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${s.bg} ${s.text}`}>
-      {s.label}
-    </span>
+    <div className="flex items-center justify-between text-sm">
+      <span className="text-[var(--text-secondary)]">{label}</span>
+      <div className="flex items-center gap-2">
+        {value && <span className="font-mono text-[var(--text-primary)]">{value}</span>}
+        {status && (
+          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: statusColors[status] }} />
+        )}
+      </div>
+    </div>
   );
 }
