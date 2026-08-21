@@ -124,7 +124,7 @@
         <!-- Status Indicator Pill -->
         <div 
           class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-all duration-200"
-          :class="farmState.running ? 'bg-amber-50 text-amber-700 border-amber-200/80 animate-pulse' : 'bg-surface-alt text-text-secondary border-border'"
+          :class="farmState.running ? 'bg-amber-50 text-amber-700 border-amber-200/80' : 'bg-surface-alt text-text-secondary border-border'"
         >
           <span 
             class="w-2 h-2 rounded-full"
@@ -429,7 +429,7 @@
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-2">
             <h2 class="text-sm font-semibold text-text-primary">Live Activity Logs</h2>
-            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
           </div>
 
           <div class="flex items-center gap-1.5">
@@ -487,7 +487,7 @@
             class="flex-1 overflow-y-auto space-y-2 pr-1 text-[11px]"
           >
             <template x-for="s in sessions" :key="s.id">
-              <div class="p-2.5 rounded bg-neutral-900/80 border border-neutral-800 space-y-1">
+              <div class="py-2 border-b border-neutral-800/80 space-y-1">
                 <div class="flex items-center justify-between text-neutral-300">
                   <span class="font-bold text-amber-400" x-text="`Session ${s.id}`"></span>
                   <span class="text-[10px] text-neutral-400 font-semibold" x-text="formatDate(s.started_at)"></span>
@@ -600,16 +600,16 @@
           </div>
 
           <!-- Warning for Off Mode -->
-          <div x-show="settingsForm.proxyMode === 'off'" class="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-800 text-[11px] leading-relaxed">
+          <div x-show="settingsForm.proxyMode === 'off'" class="text-amber-800 text-[11px] leading-relaxed">
             <strong>Notice:</strong> Running in direct IP mode. Suitable for testing or generating small batches.
           </div>
 
           <!-- Proxy Pool Section -->
           <div x-show="settingsForm.proxyMode === 'socks5'" class="space-y-3">
             <label class="block font-semibold text-text-primary">Proxy Pool List</label>
-            <div class="space-y-1.5 max-h-32 overflow-y-auto border border-border rounded-lg p-2 bg-surface-alt">
+            <div class="space-y-1 max-h-32 overflow-y-auto divide-y divide-border/40 py-1">
               <template x-for="(p, i) in settingsForm.proxyPool" :key="i">
-                <div class="flex items-center justify-between text-[11px] font-mono py-1 px-2 bg-surface rounded border border-border/40">
+                <div class="flex items-center justify-between text-[11px] font-mono py-1 px-1">
                   <span class="truncate" x-text="p"></span>
                   <button @click="removeProxy(i)" class="text-rose-500 hover:text-rose-700 ml-2">✕</button>
                 </div>
