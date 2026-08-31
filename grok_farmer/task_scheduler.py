@@ -159,7 +159,11 @@ def delete_task() -> tuple[bool, str]:
 
 
 def ensure_task(enabled: bool) -> tuple[bool, str]:
-    """Ensure hourly task + startup shortcut match desired enabled state. Creates if missing."""
+    """Ensure hourly task + startup shortcut match desired enabled state.
+
+    enabled=True  -> create schtasks HOURLY/4 + Startup shortcut (persists after panel closed & reboot)
+    enabled=False -> COMPLETELY DELETE both, so it truly disappears from Task Scheduler / Task Manager Startup
+    """
     _ensure_batch()
     if enabled:
         if not task_exists():
@@ -175,17 +179,13 @@ def ensure_task(enabled: bool) -> tuple[bool, str]:
             return False, f"hourly enabled but shortcut failed: {out_s}"
         return True, "ENABLED"
     else:
-        msgs = []
-        if task_exists():
-            ok, out = disable_task()
-            msgs.append(out)
+        # OFF must DELETE, not just disable — so it vanishes from Task Scheduler & Task Manager > Startup
+        if task_exists() or shortcut_exists():
+            ok, out = delete_task()
             if not ok:
-                return False, f"disable failed: {out}"
-        else:
-            msgs.append("task not found (already disabled)")
-        ok2, out2 = _remove_startup_shortcut()
-        msgs.append(out2)
-        return True, "DISABLED | " + " | ".join(msgs)
+                return False, f"delete failed: {out}"
+            return True, f"DELETED | {out}"
+        return True, "ALREADY_DELETED"
 
 
 def run_now() -> tuple[bool, str]:
