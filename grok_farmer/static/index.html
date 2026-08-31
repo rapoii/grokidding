@@ -691,6 +691,25 @@
           </div>
         </div>
 
+        <!-- Tab 4: System -->
+        <div x-show="activeSettingsTab === 'system'" class="space-y-4">
+          <div>
+            <label class="block font-semibold text-text-primary mb-1">Auto Token Refresher</label>
+            <p class="text-[11px] text-text-secondary leading-relaxed mb-3">Otomatis refresh token Grok yang mau expired setiap 4 jam. Tetap jalan meski panel tertutup &amp; auto-start saat laptop restart (via Windows Task Scheduler).</p>
+            <div class="flex items-center justify-between py-3 border-y border-border/60">
+              <div>
+                <p class="font-medium text-xs text-text-primary">Enable Auto-Refresh</p>
+                <p class="text-[10px] text-text-secondary" x-text="schedulerExists ? `Scheduler: ${schedulerStatus}` : 'Scheduler: not installed'"></p>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" x-model="settingsForm.autoRefresh" class="sr-only peer">
+                <div class="w-9 h-5 bg-neutral-300 rounded-full peer peer-checked:bg-emerald-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
+              </label>
+            </div>
+            <p class="text-[10px] text-text-muted mt-2">Toggle akan disinkron ke Task Scheduler saat klik Save Changes. Interval: tiap 4 jam + at logon.</p>
+          </div>
+        </div>
+
       </div>
 
       <!-- Modal Footer -->
@@ -786,6 +805,8 @@
           routerDbPath: '',
           autoRefresh: true,
         },
+        schedulerStatus: 'checking...',
+        schedulerExists: false,
         newProxyUrl: '',
         proxyTestStatus: null,
         renewModalOpen: false,
@@ -935,6 +956,17 @@
               const nr = cfg.ninrouter || {};
               this.settingsForm.routerUrl = nr.base_url || '';
               this.settingsForm.routerDbPath = nr.db_path || '';
+              this.settingsForm.autoRefresh = cfg.auto_refresh !== undefined ? cfg.auto_refresh : true;
+              // fetch scheduler live status
+              try {
+                const sr = await fetch('/api/settings/auto-refresh');
+                if (sr.ok) {
+                  const sj = await sr.json();
+                  this.schedulerStatus = sj.scheduler_state || 'unknown';
+                  this.schedulerExists = !!sj.scheduler_exists;
+                  // if scheduler missing but enabled in config, status will show not installed
+                }
+              } catch {}
             }
           } catch {}
         },
@@ -1057,7 +1089,8 @@
                 base_url: this.settingsForm.routerUrl,
                 db_path: this.settingsForm.routerDbPath,
                 password: '***',
-              }
+              },
+              auto_refresh: this.settingsForm.autoRefresh
             };
             const r = await fetch('/api/settings', {
               method: 'POST',
@@ -1065,6 +1098,20 @@
               body: JSON.stringify(payload)
             });
             if (r.ok) {
+              // sync scheduler toggle
+              try {
+                const ar = await fetch('/api/settings/auto-refresh', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ enabled: this.settingsForm.autoRefresh })
+                });
+                if (ar.ok) {
+                  const aj = await ar.json();
+                  this.schedulerStatus = aj.scheduler_state || aj.scheduler_msg || this.schedulerStatus;
+                  this.schedulerExists = aj.scheduler_exists !== undefined ? aj.scheduler_exists : this.schedulerExists;
+                  this.appendLog(`[SETTINGS] Auto-refresh ${this.settingsForm.autoRefresh ? 'ENABLED' : 'DISABLED'} — ${aj.scheduler_msg || aj.scheduler_state || 'ok'}`);
+                }
+              } catch {}
               this.closeSettingsModal();
               this.appendLog('[SETTINGS] Configuration saved successfully.');
             }

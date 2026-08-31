@@ -41,3 +41,6 @@ web/.next/
 web/.env*
 !web/.env.example
 web/*.tsbuildinfo
+
+# Grokidding auto-refresh batch (generated, local only)
+grok-auto-refresh.bat

@@ -1209,14 +1209,34 @@ async def proxy_grok_responses(request: Request):
 
 
 
+@app.get("/api/settings/auto-refresh")
+async def get_auto_refresh():
+    import json
+    from pathlib import Path
+    cfg_path = Path(__file__).resolve().parent.parent / "config.json"
+    enabled = True
+    if cfg_path.exists():
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+                enabled = cfg.get("auto_refresh", True)
+        except Exception:
+            pass
+    sched_state = "unknown"
+    sched_exists = False
+    if _HAS_SCHEDULER:
+        try:
+            sched_state = _get_sched_status()
+            sched_exists = _sched_exists()
+        except Exception as e:
+            sched_state = f"error: {e}"
+    return {"auto_refresh": enabled, "scheduler_state": sched_state, "scheduler_exists": sched_exists, "has_scheduler": _HAS_SCHEDULER}
+
 @app.post("/api/settings/auto-refresh")
 async def toggle_auto_refresh(req: Request):
-    global _refresher_running, _refresher_task
     try:
         data = await req.json()
-        enabled = data.get("enabled", True)
-        
-        # Save to config.json
+        enabled = bool(data.get("enabled", True))
         import json
         from pathlib import Path
         cfg_path = Path(__file__).resolve().parent.parent / "config.json"
@@ -1225,19 +1245,31 @@ async def toggle_auto_refresh(req: Request):
                 cfg = json.load(f)
             cfg["auto_refresh"] = enabled
             with open(cfg_path, "w", encoding="utf-8") as f:
-                json.dump(cfg, f, indent=2)
-                
-        # Apply instantly
-        with _refresher_lock:
-            if enabled and not _refresher_running:
-                _refresher_running = True
-                _refresher_task = asyncio.create_task(auto_refresh_loop())
-                state.add_log("[System] Background auto-refresh ENABLED.")
-            elif not enabled and _refresher_running:
-                _refresher_running = False
-                state.add_log("[System] Background auto-refresh DISABLED.")
-                
-        return {"status": "ok", "auto_refresh": enabled}
+                json.dump(cfg, f, indent=2, ensure_ascii=False)
+        sched_msg = ""
+        if _HAS_SCHEDULER:
+            try:
+                ok, msg = _sync_scheduler_task(enabled)
+                sched_msg = msg
+                if ok:
+                    state.add_log(f"[Auto-Refresh] {'ENABLED' if enabled else 'DISABLED'} — Task Scheduler {msg}")
+                else:
+                    state.add_log(f"[Auto-Refresh] config saved but scheduler sync failed: {msg}")
+            except Exception as e:
+                sched_msg = str(e)
+                state.add_log(f"[Auto-Refresh] scheduler error: {e}")
+        else:
+            state.add_log(f"[Auto-Refresh] {'ENABLED' if enabled else 'DISABLED'} (scheduler unavailable)")
+        # fetch fresh scheduler state
+        sched_state = "unknown"
+        sched_exists = False
+        if _HAS_SCHEDULER:
+            try:
+                sched_state = _get_sched_status()
+                sched_exists = _sched_exists()
+            except Exception:
+                pass
+        return {"status": "ok", "auto_refresh": enabled, "scheduler_msg": sched_msg, "scheduler_state": sched_state, "scheduler_exists": sched_exists}
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -1457,56 +1489,25 @@ def _run_farm(count: int, use_proxy: bool, dry_run: bool, parallel: bool = False
 
 
 
-# ── Background Token Refresher ──
-_refresher_running = False
-_refresher_task = None
-_refresher_lock = threading.Lock()
+# ── Background Token Refresher (persistent via Windows Task Scheduler) ──
+try:
+    from grok_farmer.task_scheduler import ensure_task as _ensure_sched_task, get_task_status as _get_sched_status, task_exists as _sched_exists
+    _HAS_SCHEDULER = True
+except Exception:
+    _HAS_SCHEDULER = False
 
-async def auto_refresh_loop():
-    global _refresher_running
-    import subprocess
-    import sys
-    import platform
-    
-    state.add_log("[Auto-Refresh] Background token refresher started. Will check every 4 hours.")
-    while _refresher_running:
-        try:
-            state.add_log("[Auto-Refresh] Running scheduled token refresh check...")
-            # Call the refresh script module using python subprocess so it shares the same environment
-            cmd = [sys.executable, "-m", "grok_farmer.cron_token_refresher"]
-            
-            # Hide console window on Windows
-            kwargs = {}
-            if platform.system() == "Windows":
-                kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
-                
-            proc = subprocess.Popen(
-                cmd, 
-                stdout=subprocess.PIPE, 
-                stderr=subprocess.STDOUT, 
-                text=True,
-                **kwargs
-            )
-            out, _ = proc.communicate()
-            
-            # Print output lines to log
-            for line in out.splitlines():
-                if line.strip():
-                    state.add_log(f"[Auto-Refresh] {line}")
-            state.add_log("[Auto-Refresh] Check complete. Next run in 4 hours.")
-        except Exception as e:
-            state.add_log(f"[Auto-Refresh] Error running refresh: {e}")
-        
-        # Sleep for 4 hours (14400 seconds) in 1-second chunks to allow clean exit
-        for _ in range(14400):
-            if not _refresher_running:
-                break
-            await asyncio.sleep(1)
+def _sync_scheduler_task(enabled: bool):
+    """Sync Windows Scheduled Task to desired enabled state. Returns (ok, msg)."""
+    if not _HAS_SCHEDULER:
+        return False, "scheduler module not available"
+    try:
+        return _ensure_sched_task(enabled)
+    except Exception as e:
+        return False, str(e)
 
 @app.on_event("startup")
 async def startup_event():
-    global _refresher_running, _refresher_task
-    # Read config to check if auto-refresh is enabled. Default True.
+    # Sync Task Scheduler state with config.json auto_refresh flag on every panel boot
     import json
     from pathlib import Path
     cfg_path = Path(__file__).resolve().parent.parent / "config.json"
@@ -1518,16 +1519,21 @@ async def startup_event():
                 enabled = cfg.get("auto_refresh", True)
         except Exception:
             pass
-            
-    if enabled:
-        with _refresher_lock:
-            _refresher_running = True
-            _refresher_task = asyncio.create_task(auto_refresh_loop())
+    if _HAS_SCHEDULER:
+        try:
+            ok, msg = _sync_scheduler_task(enabled)
+            if ok:
+                state.add_log(f"[Auto-Refresh] Task Scheduler synced: {'ENABLED' if enabled else 'DISABLED'} ({msg})")
+            else:
+                state.add_log(f"[Auto-Refresh] Task Scheduler sync failed: {msg}")
+        except Exception as e:
+            state.add_log(f"[Auto-Refresh] Scheduler sync error: {e}")
+    else:
+        state.add_log("[Auto-Refresh] Scheduler module not available — running in panel-only mode")
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    global _refresher_running
-    _refresher_running = False
+    pass
 
 # ── Server Runner ──
 
