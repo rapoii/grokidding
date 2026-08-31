@@ -580,6 +580,13 @@
         >
           9Router
         </button>
+        <button 
+          @click="activeSettingsTab = 'system'"
+          class="pb-2.5 px-2 border-b-2 font-medium transition-colors"
+          :class="activeSettingsTab === 'system' ? 'border-accent text-accent' : 'border-transparent text-text-secondary hover:text-text-primary'"
+        >
+          System
+        </button>
       </div>
 
       <!-- Settings Body -->
@@ -777,6 +784,7 @@
           emailDomain: '',
           routerUrl: '',
           routerDbPath: '',
+          autoRefresh: true,
         },
         newProxyUrl: '',
         proxyTestStatus: null,

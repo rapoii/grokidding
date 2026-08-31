@@ -1208,6 +1208,39 @@ async def proxy_grok_responses(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+
+@app.post("/api/settings/auto-refresh")
+async def toggle_auto_refresh(req: Request):
+    global _refresher_running, _refresher_task
+    try:
+        data = await req.json()
+        enabled = data.get("enabled", True)
+        
+        # Save to config.json
+        import json
+        from pathlib import Path
+        cfg_path = Path(__file__).resolve().parent.parent / "config.json"
+        if cfg_path.exists():
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            cfg["auto_refresh"] = enabled
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, indent=2)
+                
+        # Apply instantly
+        with _refresher_lock:
+            if enabled and not _refresher_running:
+                _refresher_running = True
+                _refresher_task = asyncio.create_task(auto_refresh_loop())
+                state.add_log("[System] Background auto-refresh ENABLED.")
+            elif not enabled and _refresher_running:
+                _refresher_running = False
+                state.add_log("[System] Background auto-refresh DISABLED.")
+                
+        return {"status": "ok", "auto_refresh": enabled}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
@@ -1422,6 +1455,79 @@ def _run_farm(count: int, use_proxy: bool, dry_run: bool, parallel: bool = False
         state.add_log("Checking quota...")
         state.broadcast_quota()
 
+
+
+# ── Background Token Refresher ──
+_refresher_running = False
+_refresher_task = None
+_refresher_lock = threading.Lock()
+
+async def auto_refresh_loop():
+    global _refresher_running
+    import subprocess
+    import sys
+    import platform
+    
+    state.add_log("[Auto-Refresh] Background token refresher started. Will check every 4 hours.")
+    while _refresher_running:
+        try:
+            state.add_log("[Auto-Refresh] Running scheduled token refresh check...")
+            # Call the refresh script module using python subprocess so it shares the same environment
+            cmd = [sys.executable, "-m", "grok_farmer.cron_token_refresher"]
+            
+            # Hide console window on Windows
+            kwargs = {}
+            if platform.system() == "Windows":
+                kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
+                
+            proc = subprocess.Popen(
+                cmd, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.STDOUT, 
+                text=True,
+                **kwargs
+            )
+            out, _ = proc.communicate()
+            
+            # Print output lines to log
+            for line in out.splitlines():
+                if line.strip():
+                    state.add_log(f"[Auto-Refresh] {line}")
+            state.add_log("[Auto-Refresh] Check complete. Next run in 4 hours.")
+        except Exception as e:
+            state.add_log(f"[Auto-Refresh] Error running refresh: {e}")
+        
+        # Sleep for 4 hours (14400 seconds) in 1-second chunks to allow clean exit
+        for _ in range(14400):
+            if not _refresher_running:
+                break
+            await asyncio.sleep(1)
+
+@app.on_event("startup")
+async def startup_event():
+    global _refresher_running, _refresher_task
+    # Read config to check if auto-refresh is enabled. Default True.
+    import json
+    from pathlib import Path
+    cfg_path = Path(__file__).resolve().parent.parent / "config.json"
+    enabled = True
+    if cfg_path.exists():
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+                enabled = cfg.get("auto_refresh", True)
+        except Exception:
+            pass
+            
+    if enabled:
+        with _refresher_lock:
+            _refresher_running = True
+            _refresher_task = asyncio.create_task(auto_refresh_loop())
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    global _refresher_running
+    _refresher_running = False
 
 # ── Server Runner ──
 
