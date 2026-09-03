@@ -13,6 +13,7 @@ to the project root, otherwise `pythonw -m grok_farmer...` fails when cwd is
 System32 (Task Scheduler default). Batch is generated dynamically.
 """
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -29,17 +30,24 @@ _CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 
 
 def _pythonw() -> str:
-    # Prioritize pythonw that actually has curl_cffi installed
-    candidates = [
-        Path(sys.executable.replace("python.exe", "pythonw.exe")),
-        Path(r"C:\Users\Rafi\AppData\Local\Python\bin\pythonw.exe"),
-        Path(r"C:\Users\Rafi\AppData\Local\Python\pythoncore-3.14-64\pythonw.exe"),
-        Path(r"C:\Users\Rafi\AppData\Local\hermes\hermes-agent\venv\Scripts\pythonw.exe"),
-        Path(sys.executable),
-    ]
-    for p in candidates:
-        if p.exists():
-            return str(p)
+    # 1. Check current running python environment
+    cur_py = Path(sys.executable)
+    cur_pyw = Path(sys.executable.replace("python.exe", "pythonw.exe"))
+    if cur_pyw.exists():
+        return str(cur_pyw)
+    if cur_py.exists():
+        return str(cur_py)
+
+    # 2. Look for pythonw in PATH
+    which_pyw = shutil.which("pythonw")
+    if which_pyw:
+        return which_pyw
+
+    # 3. Fallback to python in PATH
+    which_py = shutil.which("python")
+    if which_py:
+        return which_py
+
     return sys.executable
 
 

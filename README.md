@@ -132,9 +132,9 @@ Edit `config.json`:
 
 | Field | Keterangan |
 |-------|------------|
-| `ninrouter.base_url` | URL 9Router (`http://localhost:3000` atau tunnel URL) |
+| `ninrouter.base_url` | URL 9Router (default: `http://localhost:20128`) |
 | `ninrouter.password` | Password login 9Router |
-| `ninrouter.db_path` | Path absolut ke SQLite 9Router |
+| `ninrouter.db_path` | Path SQLite 9Router (opsional, otomatis deteksi `%APPDATA%/9Router/db/data.sqlite`) |
 | `email.mode` | `"generator"` (pakai generator.email) |
 | `proxy.mode` | Mode rotasi IP: `socks5` atau `off` |
 | `proxy.pool` | Daftar URL proxy (rotasi tiap akun) |

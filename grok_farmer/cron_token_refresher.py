@@ -6,10 +6,46 @@ import sys
 import time
 from datetime import datetime, timezone
 
+import os
+from pathlib import Path
+
 CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828"
 TOKEN_URL = "https://auth.x.ai/oauth2/token"
-DB_PATH = r"C:\Users\Rafi\AppData\Roaming\9Router\db\data.sqlite"
 GROK_SHELL_UA = "grok-shell/0.2.99 (linux; x86_64)"
+
+def _get_router_db() -> Path:
+    try:
+        from grok_farmer.config import load_config
+        cfg = load_config()
+        db_path = cfg.get("ninrouter", {}).get("db_path", "")
+        if db_path:
+            p = Path(db_path)
+            if p.exists():
+                return p
+    except Exception:
+        pass
+
+    # Common fallback paths based on active user environment
+    appdata = os.environ.get("APPDATA")
+    candidates = []
+    if appdata:
+        candidates.append(Path(appdata) / "9Router" / "db" / "data.sqlite")
+        candidates.append(Path(appdata) / "9router" / "db" / "data.sqlite")
+    candidates.extend([
+        Path.home() / "AppData" / "Roaming" / "9Router" / "db" / "data.sqlite",
+        Path.home() / "AppData" / "Roaming" / "9router" / "db" / "data.sqlite",
+        Path.home() / ".9router" / "db" / "data.sqlite",
+        Path("data.sqlite"),
+    ])
+
+    for fallback in candidates:
+        if fallback.exists():
+            return fallback
+    return candidates[0] if candidates else Path("data.sqlite")
+
+
+def _get_router_db_path() -> str:
+    return str(_get_router_db())
 
 
 def main() -> int:
@@ -25,8 +61,13 @@ def main() -> int:
 
     s.headers.update({"User-Agent": GROK_SHELL_UA, "Accept": "application/json"})
 
+    db_path = _get_router_db()
+    if not db_path.exists():
+        print(f"9Router DB not found at: {db_path}")
+        return 1
+
     try:
-        db = sqlite3.connect(DB_PATH)
+        db = sqlite3.connect(str(db_path))
     except Exception as e:
         print(f"DB open failed: {e}")
         return 1

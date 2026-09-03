@@ -1,8 +1,8 @@
 {
   "ninrouter": {
-    "base_url": "http://localhost:3000",
+    "base_url": "http://localhost:20128",
     "password": "password-kamu",
-    "db_path": "C:/Users/Kamu/AppData/Roaming/9router/db/data.sqlite"
+    "db_path": ""
   },
   "email": {
     "mode": "generator"
