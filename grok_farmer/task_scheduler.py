@@ -29,9 +29,12 @@ _CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 
 
 def _pythonw() -> str:
+    # Prioritize pythonw that actually has curl_cffi installed
     candidates = [
-        Path(r"C:\Users\Rafi\AppData\Local\hermes\hermes-agent\venv\Scripts\pythonw.exe"),
         Path(sys.executable.replace("python.exe", "pythonw.exe")),
+        Path(r"C:\Users\Rafi\AppData\Local\Python\bin\pythonw.exe"),
+        Path(r"C:\Users\Rafi\AppData\Local\Python\pythoncore-3.14-64\pythonw.exe"),
+        Path(r"C:\Users\Rafi\AppData\Local\hermes\hermes-agent\venv\Scripts\pythonw.exe"),
         Path(sys.executable),
     ]
     for p in candidates:
